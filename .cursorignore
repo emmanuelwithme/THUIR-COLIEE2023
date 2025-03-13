@@ -1,0 +1,4 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+coliee_dataset/
+!coliee_dataset\task1\task1_train_labels_2025.json
+!coliee_dataset\Case Law Dataset(Task 1&2)\task2_train_labels_2025.json
