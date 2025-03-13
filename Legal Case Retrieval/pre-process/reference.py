@@ -4,14 +4,12 @@ from langdetect import detect
 from langdetect import detect_langs
 from langdetect import DetectorFactory
 import nltk
-nltk.download('punkt')
+from tqdm import tqdm
+import multiprocessing
+from functools import partial
+# nltk.download('punkt') # 使用 pickle 格式來存儲 tokenizer 模型，舊版，不安全，已棄用
+nltk.download('punkt_tab') # nltk 3.8.2 或更新
 DetectorFactory.seed = 0
-
-
-names = os.listdir("./task1/task1_train_files_2023")
-have_sum = os.listdir("./task1/summary")
-
-last_lang = "en"
 
 def is_sentence(s):
     return s == "" or s.strip().endswith(('.', ':', ';'))
@@ -31,9 +29,11 @@ def rep(match):
 def rep2(match):
     result = match.group()
     return result.replace("{}", "[").replace("}", "]")
-total = 0
-for name in names:
-    with open(f"./task1/task1_train_files_2023/{name}", "r", encoding="utf-8") as f:
+
+def process_file(name, input_dir, processed_dir, output_dir):
+    last_lang = "en"
+    
+    with open(f"{input_dir}/{name}", "r", encoding="utf-8") as f:
         t = f.read()
         idx_ = t.find("[1]")
         if idx_ != -1:
@@ -66,7 +66,7 @@ for name in names:
         
         for l in lines:
             l1 = l.replace("<FRAGMENT_SUPPRESSED>", "").replace("FRAGMENT_SUPPRESSED", "").strip()
-            l2 = re.sub('\[\d{1,3}\]', "", l1).strip()
+            l2 = re.sub(r'\[\d{1,3}\]', "", l1).strip()
             if (
                 (len(l2) == 1 or
                     (
@@ -84,8 +84,8 @@ for name in names:
                 sentence_list.append(l2)
     txt = "\n".join(sentence_list)
 
-    txt = re.sub("\. *(\. *)+", "", txt)
-    txt = re.sub("[A-Z]*_SUPPRESSED", "", txt)
+    txt = re.sub(r"\. *(\. *)+", "", txt)
+    txt = re.sub(r"[A-Z]*_SUPPRESSED", "", txt)
     
     need_to_removed = ["[translation]", "[Translation]", "[sic]", "[ sic ]", "[Emphasis added.]",
                        "[emphasis added]", 
@@ -101,13 +101,13 @@ for name in names:
         txt = txt.replace(token, "")
 
 
-    txt = re.sub("\[[A-Z][A-Z]+\]", rep, txt)
-    txt = re.sub("[^a-zA-Z]\[[b-zB-Z]\] ", remove, txt)
-    txt = re.sub("\[[a-zA-Z][a-zA-Z \.']*\]", remove2, txt)
-    txt = re.sub("\{[A-Z][A-Z]+\}", rep2, txt)
-    txt = re.sub("\n\n+", "\n\n", txt)
-    txt = re.sub("\.\.+", ".", txt)
-    txt = re.sub("\n\.\n", "\n\n", txt)
+    txt = re.sub(r"\[[A-Z][A-Z]+\]", rep, txt)
+    txt = re.sub(r"[^a-zA-Z]\[[b-zB-Z]\] ", remove, txt)
+    txt = re.sub(r"\[[a-zA-Z][a-zA-Z \.']*\]", remove2, txt)
+    txt = re.sub(r"\{[A-Z][A-Z]+\}", rep2, txt)
+    txt = re.sub(r"\n\n+", "\n\n", txt)
+    txt = re.sub(r"\.\.+", ".", txt)
+    txt = re.sub(r"\n\.\n", "\n\n", txt)
     
     new_lines = txt.split("\n")
     for i in range(len(new_lines)):
@@ -115,6 +115,7 @@ for name in names:
             try:
                 lang = detect(new_lines[i])
             except:
+                lang = last_lang  # 在異常情況下為 lang 賦值
                 if last_lang == "fr":
                     new_lines[i] = ""
                    
@@ -128,23 +129,47 @@ for name in names:
                 last_lang = "en"
     
     txt = "\n".join(new_lines)     
-    txt = re.sub("\n\n+", "\n\n", txt)
+    txt = re.sub(r"\n\n+", "\n\n", txt)
     words = nltk.word_tokenize(txt)
     now_len = len(words)
     if len(words) < 512:
-        print(name)
-        with open(f"./task1/processed/{name}", "r", encoding="utf-8") as fd:
-            new_txt = fd.read()
-            slt = nltk.sent_tokenize(new_txt)
-            for ii, sl in enumerate(slt):
-                new_len_words = len(sl.split(' '))
-                now_len += new_len_words
-                if now_len > 512:
-                    break
-            txt = "".join(slt[:ii]) + txt
-    with open(f"./task1/processed_new/{name}", "w+", encoding="utf-8") as f:
+        try:
+            with open(f"{processed_dir}/{name}", "r", encoding="utf-8") as fd:
+                new_txt = fd.read()
+                slt = nltk.sent_tokenize(new_txt)
+                ii = 0  # 初始化 ii 變數
+                for ii, sl in enumerate(slt):
+                    new_len_words = len(sl.split(' '))
+                    now_len += new_len_words
+                    if now_len > 512:
+                        break
+                txt = "".join(slt[:ii]) + txt
+        except FileNotFoundError:
+            print(f"警告：找不到文件 {processed_dir}/{name}")
+    
+    with open(f"{output_dir}/{name}", "w+", encoding="utf-8") as f:
         f.write(txt)
-        
-    total += 1
-    if total % 100 == 0:
-        print(f"{total}, and total {len(names)}")
+
+if __name__ == "__main__":
+    input_dir = "./coliee_dataset/task1/task1_train_files_2025"
+    processed_dir = "./coliee_dataset/task1/processed"
+    output_dir = "./coliee_dataset/task1/processed_new"
+    
+    # 確保輸出目錄存在
+    os.makedirs(output_dir, exist_ok=True)
+    
+    names = os.listdir(input_dir)
+    
+    # 創建進程池，使用所有可用的CPU核心
+    num_cores = multiprocessing.cpu_count()
+    print(f"使用 {num_cores} 個CPU核心進行並行處理")
+    
+    # 創建偏函數，固定輸入和輸出目錄參數
+    process_func = partial(process_file, 
+                          input_dir=input_dir, 
+                          processed_dir=processed_dir, 
+                          output_dir=output_dir)
+    
+    # 使用進程池並行處理所有文件
+    with multiprocessing.Pool(processes=num_cores) as pool:
+        list(tqdm(pool.imap(process_func, names), total=len(names), desc="處理文件"))

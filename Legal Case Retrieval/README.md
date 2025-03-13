@@ -6,9 +6,9 @@ To be specific, we design structure-aware pre-trained language models to enhance
 
 ## Pre-processing
 
-`process.py` file is used for preprocessing legal cases, including removing certain symbols and tags, removing French, concatenating abstracts, and more. 
+`process.py` file is used for preprocessing legal cases, including removing certain symbols and tags, removing French, concatenating abstracts(連接摘要), and more. 
 
-`reference.py` file only retains sentences containing special tags and adjacent sentences. 
+`reference.py` file only retains sentences containing special tags(特殊標記) and adjacent sentences(相鄰的句子). 
 
 `summary.py` file is used for extracting the summary from an unprocessed file. 
 
