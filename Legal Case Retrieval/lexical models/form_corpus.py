@@ -2,10 +2,23 @@ import json
 import os
 import re
 from tqdm import tqdm
-raw_path = '/search/odin/TianGongQP/qian/COLIEE2023/coliee23/dataset/processed'
+import stat
 
+# 定義路徑
+raw_path = './coliee_dataset/task1/processed'
 file_dir = os.listdir(raw_path)
-outfile = open('/search/odin/TianGongQP/qian/COLIEE2023/lht_process/BM25/corpus/corpus.json','w')  
+
+# 定義目標資料夾
+output_dir = './coliee_dataset/task1/lht_process/BM25/corpus'
+
+# 確保目標資料夾存在，如果不存在則自動創建
+os.makedirs(output_dir, exist_ok=True)
+# 設置資料夾的權限，確保所有用戶都有讀寫權限
+os.chmod(output_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+print(f"✅ 目標資料夾 {output_dir} 已建立並設定適當權限")
+
+
+outfile = open(f'{output_dir}/corpus.json','w', encoding='utf-8')  
 
 # for a_file in file_dir:
 #     pid = a_file.split('.')[0]
@@ -50,5 +63,6 @@ for a_file in tqdm(file_dir):
     # outline = json.dumps(save_dict,ensure_ascii=False)+'\n'
     # outfile.write(outline)
     # # break
-# with open('/search/odin/TianGongQP/qian/COLIEE2023/coliee23/dataset/corpus_all.json','w',encoding='utf-8') as fp:
+# with open('./coliee_dataset/task1/corpus_all.json','w',encoding='utf-8') as fp:
 #     json.dump(save_dict,fp,ensure_ascii=False)
+print(f"✅ JSON 檔案已成功寫入至 {outfile.name}")
