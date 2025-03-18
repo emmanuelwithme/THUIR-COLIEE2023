@@ -23,4 +23,16 @@ python -m pyserini.search.lucene ^
   --threads %threads% ^
   --batch-size 16
 
+@REM 進行檢索查詢
+python -m pyserini.search.lucene ^
+  --index "C:\THUIR-COLIEE2023\coliee_dataset\task1\lht_process\BM25\index" ^
+  --topics "C:\THUIR-COLIEE2023\coliee_dataset\task1\lht_process\BM25\query_train.tsv" ^
+  --output "C:\THUIR-COLIEE2023\coliee_dataset\task1\lht_process\BM25\output_bm25_train.tsv" ^
+  --bm25 ^
+  --k1 3 ^
+  --b 1 ^
+  --hits 4451 ^
+  --threads %threads% ^
+  --batch-size 16
+
 pause
