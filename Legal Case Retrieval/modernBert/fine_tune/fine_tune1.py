@@ -20,6 +20,9 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 import random
 random.seed(289) # 設定隨機種子以保證可重現性（可選）
+import pynvml
+pynvml.nvmlInit()
+nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # GPU 0
 
 # ------------------------
 # 先定義能「隨機抽 10 筆」的 Dataset
@@ -146,47 +149,36 @@ class ContrastiveDataset(Dataset):
 @dataclass
 class ContrastiveCollator:
     tokenizer: AutoTokenizer
-    max_length: int = 4096 #最大8192
+    max_length: int = 4096  # 或你想要的長度
 
     def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
-        """
-        batch 裡每個項目都沒有 labels，要在這裡幫它加 labels（全部設為 0）。
-        """
+        bsz = len(batch)
         q_texts = [item["query_text"] for item in batch]
         p_texts = [item["positive_text"] for item in batch]
         n_texts = [neg for item in batch for neg in item["negative_texts"]]
 
-        anchor_enc = self.tokenizer(
-            q_texts,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt"
-        )
-        positive_enc = self.tokenizer(
-            p_texts,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt"
-        )
-        negative_enc = self.tokenizer(
-            n_texts,
+        # 一次把所有  q + p + n 都 tokenize
+        all_texts = q_texts + p_texts + n_texts
+        all_enc = self.tokenizer(
+            all_texts,
             padding=True,
             truncation=True,
             max_length=self.max_length,
             return_tensors="pt"
         )
 
-        bsz = len(batch)
-        # contrastive label = 0（表示第一個位置是正樣本），Trainer 會把它當成 label_ids
+        # 切回三份：anchor (bsz)、positive (bsz)、negative (bsz*neg_count)
+        neg_count = len(n_texts) // bsz
+        sizes = [bsz, bsz, bsz * neg_count]
+        anchor_ids, positive_ids, negative_ids = all_enc["input_ids"].split(sizes, dim=0)
+        anchor_mask, positive_mask, negative_mask = all_enc["attention_mask"].split(sizes, dim=0)
+
         labels = torch.zeros(bsz, dtype=torch.long)
-
         return {
-            "anchor_input": anchor_enc,
-            "positive_input": positive_enc,
-            "negative_input": negative_enc,
-            "labels": labels, 
+            "anchor_input":   {"input_ids": anchor_ids,   "attention_mask": anchor_mask},
+            "positive_input": {"input_ids": positive_ids, "attention_mask": positive_mask},
+            "negative_input": {"input_ids": negative_ids, "attention_mask": negative_mask},
+            "labels": labels,
         }
 
 
@@ -207,7 +199,7 @@ class ModernBERTContrastive(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
         self.temperature = temperature
-        # self.encoder.config.use_cache = False
+        self.encoder.config.use_cache = False
         self.encoder.enable_input_require_grads()
         self.encoder.gradient_checkpointing_enable()
 
@@ -222,6 +214,21 @@ class ModernBERTContrastive(nn.Module):
         vec_project = self.projector(vec)
         vec_l2_norm = torch.nn.functional.normalize(vec_project, p=2, dim=-1) #
         return vec_l2_norm
+    
+    def encode_in_chunks(self, negatives_input, chunk_size):
+        ids = negatives_input["input_ids"]
+        attn = negatives_input["attention_mask"]
+        all_vecs = []
+        for start in range(0, ids.size(0), chunk_size):
+            end = start + chunk_size
+            out = self.encoder(
+                input_ids=ids[start:end],
+                attention_mask=attn[start:end]
+            )
+            cls = out.last_hidden_state[:,0,:]
+            proj = self.projector(cls)
+            all_vecs.append(torch.nn.functional.normalize(proj, p=2, dim=-1))
+        return torch.cat(all_vecs, dim=0)
 
     def forward(
         self,
@@ -235,20 +242,40 @@ class ModernBERTContrastive(nn.Module):
         labels 參數 pop 出來並傳進來。
         """
         print(f"forward...")
-        anchor_vec = self.encode(anchor_input)      # (bsz, H)
-        positive_vec = self.encode(positive_input)  # (bsz, H)
-        negative_vec = self.encode(negative_input)  # (bsz * neg_count, H)
+        
+        bsz = anchor_input["input_ids"].size(0)
+        neg_count = negative_input["input_ids"].size(0) // bsz
 
-        bsz = anchor_vec.size(0)
-        neg_count = negative_vec.size(0) // bsz
-        negative_vec = negative_vec.view(bsz, neg_count, -1)  # (bsz, neg_count, H)
+        # 1. 合併成一個大 batch
+        merged_batch = {
+            "input_ids": torch.cat([
+                anchor_input["input_ids"],
+                positive_input["input_ids"],
+                negative_input["input_ids"],
+            ], dim=0),
+            "attention_mask": torch.cat([
+                anchor_input["attention_mask"],
+                positive_input["attention_mask"],
+                negative_input["attention_mask"],
+            ], dim=0),
+        }
+
+        # 2. 一次呼叫 encode()（裡面已經有 projector + normalize）
+        vec_all = self.encode(merged_batch)   # shape: (bsz*2 + bsz*neg_count, H)
+
+        # 3. 拆回 anchor / positive / negative
+        anchor_vec   = vec_all[:bsz]
+        positive_vec = vec_all[bsz:bsz*2]
+        neg_flat     = vec_all[bsz*2:]
+        negative_vec = neg_flat.view(bsz, neg_count, -1)
+
+        self.print_gpu_status("all encoded in one pass")
 
         # 正樣本相似度
         pos_sim = torch.cosine_similarity(anchor_vec, positive_vec, dim=-1).unsqueeze(1)  # (bsz, 1)
         # 負樣本相似度
-        neg_sim = torch.cosine_similarity(
-            anchor_vec.unsqueeze(1), negative_vec, dim=-1
-        )  # (bsz, neg_count)
+        neg_sim = torch.cosine_similarity(anchor_vec.unsqueeze(1), negative_vec, dim=-1)  # (bsz, neg_count)
+        self.print_gpu_status("cosine similarity computed")
 
         logits = torch.cat([pos_sim, neg_sim], dim=1) / self.temperature  # (bsz, 1+neg_count)，temperature通常是 0.05 ~ 0.2
         # collator 裡已經給了 labels=0
@@ -256,6 +283,11 @@ class ModernBERTContrastive(nn.Module):
         print(f"labels: {labels}")
 
         return {"loss": loss, "logits": logits}
+    
+    def print_gpu_status(self, tag=""):
+        util = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
+        print(f"🟩 [{tag}] GPU 使用率: {util.gpu}% │ 記憶體: {mem.used / 1024**2:.0f} MB / {mem.total / 1024**2:.0f} MB")
 
 
 # ----------- Main Training -----------  
@@ -304,6 +336,7 @@ def main():
     # 4. 設定 TrainingArguments
     args = TrainingArguments(
         output_dir="./modernBERT_contrastive",
+        dataloader_num_workers=8,  # 多核讀資料，減少GPU等CPU、I/O
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         per_device_eval_batch_size=1,
