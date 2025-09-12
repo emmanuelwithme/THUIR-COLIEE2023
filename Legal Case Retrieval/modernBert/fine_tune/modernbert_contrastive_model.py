@@ -21,12 +21,12 @@ class ContrastiveConfig(ModernBertConfig):
 
     def __init__(
         self,
-        temperature: float = 1.0,
+        # temperature: float = 1.0,
         **kwargs,  # 其余所有 ModernBertConfig 的字段都会被自动接收
     ):
         super().__init__(**kwargs)
         # 只新增 temperature 参数，projector_hidden_size 直接用 hidden_size
-        self.temperature = temperature
+        # self.temperature = temperature
 
 
 class ModernBERTContrastive(PreTrainedModel):
@@ -39,7 +39,10 @@ class ModernBERTContrastive(PreTrainedModel):
     """
     config_class = ContrastiveConfig
     base_model_prefix = "encoder."  # 告訴HF模型參數權重：encoder.* 前綴對應 ModernBertModel backbone
-
+    @property
+    def temperature(self):
+        return torch.exp(self.log_temperature)
+    
     def __init__(self, config: ContrastiveConfig):
         super().__init__(config)
 
@@ -56,7 +59,7 @@ class ModernBERTContrastive(PreTrainedModel):
         )
 
         # 3) 温度系数
-        self.temperature = config.temperature
+        self.log_temperature = nn.Parameter(torch.tensor(0.0))
 
         # 4) 与训练时保持一致：关闭 use_cache，启用梯度检查点
         # self.encoder.config.use_cache = False
@@ -93,7 +96,7 @@ class ModernBERTContrastive(PreTrainedModel):
         # —— 3) 建实例
         model = cls(config)
 
-        # —— 4) 再把 encoder + projector head 的权重一次性 load 进来
+        # —— 4) 再把 encoder + projector head + log_temperature 的权重一次性 load 进来
         # 优先找 safetensors，否则找 pytorch_model.bin
         safetensors_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         bin_path        = os.path.join(pretrained_model_name_or_path, WEIGHTS_NAME)
@@ -141,6 +144,9 @@ class ModernBERTContrastive(PreTrainedModel):
         print("✅Unexpected keys (checkpoint 里多的，模型里没用到)：")
         for k in unexpected_keys:
             print("   ", k)
+
+        print(f"[from_pretrained] log_temperature = {model.log_temperature.item():.6f}")
+        print(f"[from_pretrained] temperature     = {model.temperature.item():.6f}")
             
         return model    
 
@@ -209,7 +215,7 @@ if __name__ == "__main__":
         print("使用 CPU")
 
     # 假设已有一个以 HF 格式保存好的训练输出目录：
-    checkpoint_dir = "./modernBERT_contrastive/checkpoint-5424"
+    checkpoint_dir = "./modernBERT_contrastive/checkpoint-4068"
 
     # 1) 载入 tokenizer（该目录下已经包含 tokenizer.json、tokenizer_config.json）
     tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir)
@@ -235,3 +241,5 @@ if __name__ == "__main__":
         embedding = model.encode({"input_ids": inputs.input_ids, "attention_mask": inputs.attention_mask})
     print("Embedding shape:", embedding.shape)  # (1, hidden_size)
     # print("Embedding (L2-normalized):", embedding)
+    print(f"log_temperature = {model.log_temperature.item():.6f}")
+    print(f"temperature     = {model.temperature.item():.6f}")

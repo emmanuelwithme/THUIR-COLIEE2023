@@ -79,7 +79,7 @@ def find_best_checkpoint(checkpoint_root: str, metric: str, mode: str) -> str:
     if best_checkpoint is None:
         raise ValueError(f"在路徑 {checkpoint_root} 底下，找不到任何包含「{metric}」的 checkpoint。")
 
-    return best_checkpoint
+    return best_checkpoint, best_value
 
 
 if __name__ == "__main__":
@@ -107,5 +107,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    best_ckpt = find_best_checkpoint(args.root, args.metric, args.mode)
-    print(best_ckpt)
+    best_ckpt, best_value = find_best_checkpoint(args.root, args.metric, args.mode)
+    print(f"best_ckpt: {best_ckpt}, best_value: {best_value}")

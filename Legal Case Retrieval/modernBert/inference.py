@@ -33,10 +33,15 @@ best_acc1_ckpt = find_best_checkpoint(model_root_dir, "eval_acc1", mode="max")
 print("最佳 eval_acc1 checkpoint:", best_acc1_ckpt)
 best_acc5_ckpt = find_best_checkpoint(model_root_dir, "eval_acc5", mode="max")
 print("最佳 eval_acc5 checkpoint:", best_acc5_ckpt)
+# 取出路徑(路徑, 分數)
+best_loss_path,  _ = best_loss_ckpt
+best_acc1_path,  _ = best_acc1_ckpt
+best_acc5_path,  _ = best_acc5_ckpt
+
 # 載入 tokenizer + 載入模型權重
-tokenizer = AutoTokenizer.from_pretrained(best_acc5_ckpt)
+tokenizer = AutoTokenizer.from_pretrained(best_acc5_path)
 # model = ModernBERTContrastive.from_pretrained(best_loss_ckpt, device_map=device, torch_dtype=torch.float16, attn_implementation="flash_attention_2")
-model = ModernBERTContrastive.from_pretrained(best_acc5_ckpt, encoder_kwargs={"device_map": device, "torch_dtype": torch.float16, "attn_implementation": "flash_attention_2"})
+model = ModernBERTContrastive.from_pretrained(best_acc5_path, encoder_kwargs={"device_map": device, "torch_dtype": torch.float16, "attn_implementation": "flash_attention_2"})
 model = model.to(device)
 model = model.half() #把projector的精度也轉成torch.float16(ModernBert backbone在from_pretrained()就指定載入是float16)
 model = model.eval()

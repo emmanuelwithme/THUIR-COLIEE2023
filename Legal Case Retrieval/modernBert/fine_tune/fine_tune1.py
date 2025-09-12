@@ -11,6 +11,7 @@ from transformers import (
     ModernBertModel,
     Trainer,
     TrainingArguments,
+    TrainerCallback,
     EarlyStoppingCallback,
     EvalPrediction
 )
@@ -22,6 +23,57 @@ random.seed(289)
 import pynvml
 pynvml.nvmlInit()
 nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
+# 自訂 Callback，把紀錄寫到 TensorBoard
+class TensorBoardExtras(TrainerCallback):
+    def __init__(self):
+        self.writer = None
+
+    def _ensure_writer(self, args):
+        if self.writer is None:
+            from torch.utils.tensorboard import SummaryWriter
+            logdir = os.path.join(args.output_dir, "tb", "extras")  # 與官方 writer 分開存
+            os.makedirs(logdir, exist_ok=True)
+            self.writer = SummaryWriter(logdir)
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self._ensure_writer(args)
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        # Trainer 每個 logging step 會呼叫這裡，logs 內含 loss、learning_rate 等
+        self._ensure_writer(args)
+        if logs:
+            for k, v in logs.items():
+                if isinstance(v, (int, float)):
+                    self.writer.add_scalar(f"train/{k}", v, state.global_step)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        # 這裡額外寫 temperature 與每組學習率
+        self._ensure_writer(args)
+        model = kwargs.get("model", None)
+        optimizer = kwargs.get("optimizer", None)
+
+        if model is not None and hasattr(model, "log_temperature"):
+            temp = model.log_temperature.exp().item()
+            self.writer.add_scalar("train/temperature", temp, state.global_step)
+
+        if optimizer is not None:
+            for i, g in enumerate(optimizer.param_groups):
+                lr = float(g.get("lr", 0.0))
+                self.writer.add_scalar(f"train/lr_group_{i}", lr, state.global_step)
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        # 每次 evaluate() 後把 eval_* 寫到 TensorBoard
+        self._ensure_writer(args)
+        if metrics:
+            for k, v in metrics.items():
+                if isinstance(v, (int, float)):
+                    self.writer.add_scalar(f"eval/{k}", v, state.global_step)
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if self.writer:
+            self.writer.flush()
+            self.writer.close()
 
 # ------------------------
 # Dataset (隨機子集用)
@@ -156,10 +208,10 @@ class ModernBERTContrastive(nn.Module):
             torch.tensor(np.log(float(temperature)), dtype=torch.float32)
         )
         self.temperature_min = 1e-3
-        self.temperature_max = 100.0
+        self.temperature_max = 2.0
 
         self.encoder.config.use_cache = False
-        self.encoder.enable_input_require_grads()
+        # self.encoder.enable_input_require_grads()
         self.encoder.gradient_checkpointing_enable()
 
     def encode(self, input_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -312,7 +364,7 @@ def main():
 
     # 4. 設定 TrainingArguments
     args = TrainingArguments(
-        output_dir="./modernBERT_contrastive",
+        output_dir="./modernBERT_contrastive_0912",
         dataloader_num_workers=8,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
@@ -327,7 +379,7 @@ def main():
         logging_steps=50,
         eval_strategy="epoch",
         save_strategy="epoch",
-        save_total_limit=10,
+        save_total_limit=20,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -335,10 +387,12 @@ def main():
         report_to="none",
         include_for_metrics=["loss"],
         prediction_loss_only=False,
+        # 可選：指定 TB 目錄（自訂 Callback 會用 output_dir/tb/extras）
+        logging_dir="./modernBERT_contrastive_0912/tb",
         # weight_decay 預設 0.0；如需可加上 weight_decay=0.01
     )
     # ✅ 給 temperature 的專屬 LR（自行調整）
-    args.temperature_lr = 1e-1
+    args.temperature_lr = 5e-4
 
     # 5. 建立 Trainer（改用 TempLRTrainer）
     trainer = TempLRTrainer(
@@ -348,7 +402,7 @@ def main():
         eval_dataset=valid_dataset,
         data_collator=ContrastiveCollator(tokenizer),
         compute_metrics=acc1_compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=5), TempWatch()],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=5), TempWatch(), TensorBoardExtras()],
     )
 
     print("🔹 Trainer 設定完成，開始訓練並驗證...\n")
