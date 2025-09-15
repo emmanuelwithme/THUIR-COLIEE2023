@@ -211,7 +211,7 @@ class ModernBERTContrastive(nn.Module):
         self.temperature_max = 2.0
 
         self.encoder.config.use_cache = False
-        # self.encoder.enable_input_require_grads()
+        self.encoder.enable_input_require_grads() # 打開訓練效果會好點，可以學習id->embedding
         self.encoder.gradient_checkpointing_enable()
 
     def encode(self, input_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
