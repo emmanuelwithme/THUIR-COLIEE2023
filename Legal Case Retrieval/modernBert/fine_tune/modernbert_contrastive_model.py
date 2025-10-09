@@ -1,4 +1,6 @@
 import os
+import sys
+from pathlib import Path
 import torch
 import torch.nn as nn
 from typing import Dict, Optional
@@ -10,6 +12,12 @@ from transformers import (
     AutoTokenizer,
     WEIGHTS_NAME,               # = "pytorch_model.bin"
 )
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.device import get_device
 
 class ContrastiveConfig(ModernBertConfig):
     """
@@ -206,13 +214,7 @@ class ModernBERTContrastive(PreTrainedModel):
 # 以下示范：如何一行载入预先存好的完整 checkpoint
 # ============================================
 if __name__ == "__main__":
-    # 檢查 GPU 是否可用
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用 GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("使用 CPU")
+    device = get_device()
 
     # 假设已有一个以 HF 格式保存好的训练输出目录：
     checkpoint_dir = "./modernBERT_contrastive/checkpoint-4068"

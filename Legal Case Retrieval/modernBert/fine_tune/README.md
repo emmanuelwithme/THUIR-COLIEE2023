@@ -1,118 +1,180 @@
-# ModernBERT 對比式訓練與動態負樣本抽樣（最新流程）
+# ModernBERT 對比式訓練與動態負樣本抽樣使用說明（2025 重構版）
 
-本說明整合並更新了原先的兩份文件：
-- ADAPTIVE_SAMPLING_README.md（動態負樣本抽樣）
-- EVALUATION_SUMMARY.md（評估整合與指標）
+本文件整合舊版 `ADAPTIVE_SAMPLING_README.md`、`EVALUATION_SUMMARY.md` 等內容，同時補上目前程式碼重構後的實際流程。所有說明以 `Legal Case Retrieval/modernBert/fine_tune/fine_tune.py` 與共享模組 `Legal Case Retrieval/lcr/` 為準。
 
-以目前的訓練腳本 `Legal Case Retrieval/modernBert/fine_tune/fine_tune1.py` 為準。
+---
 
-## 目標
-- 訓練 ModernBERT 對比式檢索模型，並在訓練過程中使用「模型自己算出的相似度分數」動態挑選最具迷惑性的負樣本。
-- 每個 epoch 結束執行「全候選語料」的檢索評估，並以驗證集 Top‑5 F1 作為最佳模型挑選與早停依據，同步寫入 TensorBoard。
+## 1. 目的與核心概念
 
-## 整體流程
-1) Epoch 0 開始前（由 Trainer 內部 `_inner_training_loop` 觸發）：
-- 以當前模型在整個 candidate corpus 上計算查詢的相似度分數。
-- 將分數寫成 TREC 檔 `similarity_scores_epoch0.tsv`。
-- 依 softmax(score / T) 機率，對每個 (query, positive) 抽取固定數量的 negatives（不足時允許 with‑replacement），寫出 `adaptive_negative_epoch0_train.json`，並更新 `train_dataset`。
+* 訓練 ModernBERT 對比式檢索模型，正樣本來自官方標註 (`task1_train_labels_2025_train.json`)，負樣本使用「模型當前相似度分數」動態抽樣。
+* 每個 epoch：
+  * 開頭：重新計算 query ↔ candidate 的相似度，產生新的負樣本 JSON。
+  * 結尾：跑完整個語料（train/valid）的檢索評估，產生 TREC 檔並寫入 TensorBoard。
+* 所有訓練過程需要從專案根目錄執行（`~/THUIR-COLIEE2023`），必要的 `sys.path` 會由腳本自動加入。
 
-2) 進入每個 epoch 開始（由 Callback 觸發）：
-- 已註冊 `AdaptiveNegativeSamplingCallback`，在每個 epoch 開始時依 `update_frequency` 決定是否更新。
-- 若需更新：重算相似度 → 輸出 `similarity_scores_epoch{E}.tsv` → 依分數抽樣 → 輸出 `adaptive_negative_epoch{E}_train.json` → 更新 `train_dataset`，供本輪訓練使用。
+---
 
-3) 每個 epoch 結束（eval loop）：
-- `compute_metrics` 執行「全候選語料」的檢索評估，對 train/valid 分別輸出：
-  - `similarity_scores_epoch{E}_eval_train.tsv`
-  - `similarity_scores_epoch{E}_eval_valid.tsv`
-- 以驗證集 Top‑5 F1 作為 `eval_global_f1` 回傳給 Trainer：
-  - 最佳模型挑選依據：`metric_for_best_model="eval_global_f1"`、`greater_is_better=True`
-  - 早停監控指標：`eval_global_f1`
-- 另外把 Top‑5 F1 / Precision / Recall（train 與 valid 共 6 個值）寫入 TensorBoard（見下）。
+## 2. 執行訓練
 
-## 輸出檔命名與用途
-- 訓練用（epoch 開始前）：
-  - `similarity_scores_epoch{E}.tsv`：本輪抽樣機率的依據（模型算出的相似度與排名）。
-  - `adaptive_negative_epoch{E}_train.json`：本輪訓練使用的對比式資料（query、positive、固定數量的 negatives）。
-- 評估用（epoch 結束）：
-  - `similarity_scores_epoch{E}_eval_train.tsv`：評估 train 查詢的全語料檢索分數。
-  - `similarity_scores_epoch{E}_eval_valid.tsv`：評估 valid 查詢的全語料檢索分數（用於 `eval_global_f1`）。
-- 預設輸出路徑：`./coliee_dataset/task1/lht_process/modernBert/finetune_data`
-
-## 負樣本抽樣細節（Adaptive Negative Sampling）
-- 相似度來源：模型輸出的 L2 正規化向量之內積（≈ cosine），對每個 query 與全 corpus 計算。
-- 機率化：對「非正樣本且非查詢自身」的候選，以 `softmax(score / temperature)` 產生機率分佈：
-  - `temperature`（預設 1.0）越小 → 更聚焦高分（更難）的負樣本；越大 → 分佈更平坦（更多樣性）。
-- 固定負樣本數：若候選數 < 需求數，改用 with‑replacement 抽樣，確保每筆樣本 negatives 數量一致。
-- 自我排除：不會將查詢自身（qid）加入負樣本。
-
-## 檢索評估與最佳模型/早停
-- `compute_metrics` 於每個 eval epoch 同時計算 train 與 valid 在「全候選語料」的 Top‑5 指標：
-  - F1 / Precision / Recall（Top‑5）
-  - 以 valid F1 作為 `eval_global_f1`
-- Trainer 設定：
-  - `metric_for_best_model="eval_global_f1"`、`greater_is_better=True`、`load_best_model_at_end=True`
-  - `EarlyStoppingCallback(early_stopping_patience=5)`（或依需求調整）
-- TensorBoard 指標（每個 eval epoch 寫一次）：
-  - `retrieval/train_top5_f1`
-  - `retrieval/train_top5_precision`
-  - `retrieval/train_top5_recall`
-  - `retrieval/valid_top5_f1`
-  - `retrieval/valid_top5_precision`
-  - `retrieval/valid_top5_recall`
-
-## QUICK_TEST（快速測試模式）
-- 切換旗標：`QUICK_TEST = True/False`
-- 控制規模的環境變數（僅在 QUICK_TEST=True 時生效）：
-  - `QT_CAND_K`：候選檔案上限（預設 10）
-  - `QT_QUERY_K`：query 數量上限（預設 5）
-- 影響範圍：
-  - 訓練前/抽樣/評估所用的候選與查詢集合會被子集化；eval loop 也只跑部分 `eval_dataset`（以縮短每個 epoch 的驗證時間）。
-- 正式訓練：將 `QUICK_TEST=False` 即不受此模式影響。
-
-## 重要實作與穩定性
-- 只保留「單一責任源」更新負樣本：
-  - Epoch 0：由 Trainer 內 `_inner_training_loop` 先更新一次。
-  - 後續 epoch：僅由 `AdaptiveNegativeSamplingCallback.on_epoch_begin()` 依 `update_frequency` 觸發，避免重複更新。
-- ID 處理：
-  - `load_query_ids` 以字串保留前導零；讀檔時同時嘗試原字串與 `zfill(6)`。
-  - 相似度 map 的 qid 也使用字串，與標註 JSON 的鍵一致。
-
-## 執行重點
-1. 準備資料夾與標註（預設路徑在 `coliee_dataset/task1/...`）。
-2. 直接執行 `fine_tune1.py` 進行訓練。
-3. 於 `./modernBERT_contrastive_adaptive/tb` 查看 TensorBoard：
-   ```bash
-   tensorboard --logdir ./modernBERT_contrastive_adaptive/tb
-   ```
-
-## 常見檔案清單（示例）
-```
-coliee_dataset/task1/lht_process/modernBert/finetune_data/
-├── similarity_scores_epoch0.tsv
-├── adaptive_negative_epoch0_train.json
-├── similarity_scores_epoch1.tsv
-├── adaptive_negative_epoch1_train.json
-├── similarity_scores_epoch1_eval_train.tsv
-├── similarity_scores_epoch1_eval_valid.tsv
-├── similarity_scores_epoch2.tsv
-├── adaptive_negative_epoch2_train.json
-├── similarity_scores_epoch2_eval_train.tsv
-├── similarity_scores_epoch2_eval_valid.tsv
-└── ...
+```bash
+cd ~/THUIR-COLIEE2023
+python "Legal Case Retrieval/modernBert/fine_tune/fine_tune.py"
 ```
 
-## 小貼士
-- 大規模運算成本高：若要加速測試，使用 QUICK_TEST 並酌量提高 `QT_CAND_K` / `QT_QUERY_K`。
-- 若遇到某輪抽不到樣本：請增大候選或調整 `temperature` / `QT_*`，目前程式會依模型分數抽樣且固定落檔（不再回退 BM25）。
-- 若要每 N 個 epoch 才更新一次：設定 `update_frequency=N`。
+主要依賴：
 
-如需更多細節，請直接參閱 `Legal Case Retrieval/modernBert/fine_tune/fine_tune1.py` 之實作。
+* `lcr.device.get_device()`：列印並回傳訓練使用的裝置（GPU / CPU）。`get_device()` 也會在 `similarity_and_rank.py` 等腳本中使用，確保整個專案的裝置偵測一致。
+* `lcr.data.EmbeddingsData`、`lcr.retrieval.generate_similarity_artifacts`、`lcr.metrics.*` 等工具模組負責資料載入、相似度計算與指標運算。
 
-## 檔案產出時序（舉例）
-- epoch 0 開始前 → `similarity_scores_epoch0.tsv`、`adaptive_negative_epoch0_train.json`
-- epoch 0 結束後（eval）→ `similarity_scores_epoch1_eval_{train/valid}.tsv`
-- epoch 1 開始前 → `similarity_scores_epoch1.tsv`、`adaptive_negative_epoch1_train.json`
-- epoch 1 結束後（eval）→ `similarity_scores_epoch2_eval_{train/valid}.tsv`
-- epoch 2 開始前 → `similarity_scores_epoch2.tsv`、`adaptive_negative_epoch2_train.json`
-- epoch 2 結束後（eval）→ `similarity_scores_epoch3_eval_{train/valid}.tsv`
-- 若訓練未開始 epoch 3，則不會有 `similarity_scores_epoch3.tsv` 與 `adaptive_negative_epoch3_train.json`。
+### 必要路徑
+
+* 訓練資料（預設）：`./coliee_dataset/task1/...`
+  * Candidate：`./coliee_dataset/task1/processed`
+  * Query：`./coliee_dataset/task1/processed` 或 `.../processed_new`（可在 `fine_tune.py` 中調整 `doc_folder` / `query_dataset_path`）
+  * 標註：`./coliee_dataset/task1/task1_train_labels_2025*.json`
+* 訓練輸出：
+  * 模型 checkpoint：`./modernBERT_contrastive_adaptive`
+  * TensorBoard：`./modernBERT_contrastive_adaptive/tb`
+  * 動態負樣本 / 檢索評估：`./coliee_dataset/task1/lht_process/modernBert/finetune_data`
+
+---
+
+## 3. 設定與可調參數
+
+* `QUICK_TEST`（`fine_tune.py` 頂部）：開啟後，每個流程（訓練、抽樣、評估）都會取較小的資料子集，以快速檢查流程。關閉 (`False`) 即使用完整資料。
+* `QT_CAND_K` / `QT_QUERY_K`：在 QUICK_TEST 模式下限制候選 / query 的數量。
+* `update_frequency`（`AdaptiveNegativeSamplingTrainer` 初始化時的參數）：控制每隔幾個 epoch 重新抽樣負樣本（預設 1 = 每個 epoch 都更新）。
+* `sampling_temperature`：負樣本抽樣的 softmax 溫度（見 §5）。
+* `TrainingArguments`：
+  * `output_dir` / `logging_dir` 會自動在 QUICK_TEST 時加上 `_test` 後綴（`base_output_dir` 及 `finetune_data_dir` 也同步加後綴），以免覆蓋正式訓練結果。
+  * `metric_for_best_model="eval_global_f1"`，並啟用 `load_best_model_at_end=True`、`EarlyStoppingCallback(patience=5)`，與重構前設計一致。
+
+---
+
+## 4. 主要程式碼節點
+
+**裝置設定與資料匯入**
+* `get_device()`：`fine_tune.py` / `fine_tune_noprojector.py` / `similarity_and_rank.py` / `inference.py` 皆統一使用，執行時會印出 GPU / CPU 型號。
+* 讀取訓練資料集使用 `ContrastiveDataset`（在 `fine_tune.py` 相同目錄），其 `update_data()` 方法會在抽樣後被呼叫。
+
+**評估流程**
+* `evaluate_model_retrieval()`：
+  * 透過 `lcr.retrieval.generate_similarity_artifacts()` 生成 query × candidate 相似度，並產出 TREC (`similarity_scores_{tag}.tsv`)。
+  * `trec_file_to_dict()` + `my_classification_report()` 計算 F1 / Precision / Recall。
+  * 結果寫入 TensorBoard（由 `TensorBoardExtras` Callback）及 Trainer 的 metrics（`eval_global_f1` 用於最佳模型與早停）。
+
+**動態負樣本抽樣**
+* `generate_similarity_artifacts()`（`lcr/retrieval.py`）：
+  * 以批次張量運算（`score_matrix = query @ candidate.T`）計算相似度，可在 GPU 上平行處理整個 query 集合。
+  * 透過 `torch.sort(..., stable=True)` 將分數寫成 TREC 格式。
+  * 回傳 `SimilarityArtifacts(scores=..., trec_path=...)`，其中 `scores` 是 `{qid: {docid: score}}`，供抽樣使用。
+* `generate_adaptive_negative_samples()`（`fine_tune.py`）：
+  * 根據分數以 `softmax(score / temperature)` 生成機率。
+  * 固定每個 (query, positive) 取 `max_negatives` 個負樣本，使用 with-replacement 對應候選不足的情況。
+* `AdaptiveNegativeSamplingCallback`：
+  * `on_epoch_begin()` 根據 `update_frequency` 觸發抽樣流程，並寫出 `adaptive_negative_epoch{E}_train.json`。
+
+**TensorBoard 與 Logging**
+* 兩種 Callback：
+  * `TensorBoardExtras`：寫入訓練 loss 與溫度 (`log_temperature`)。
+  * `EvaluationCallback`：於每個 eval epoch 將 train/valid 的 top‑5 指標寫入 `retrieval/*` 指標群。
+
+---
+
+## 5. 檔案輸出與命名
+
+重構後的檔案命名延續舊版風格，細節如下：
+
+| 節點 | 主要檔案 | 說明 |
+| ---- | -------- | ---- |
+| Epoch 開始前 | `similarity_scores_epoch{E}.tsv` | 完整 corpus 的排名結果，供抽樣負樣本使用。 |
+| Epoch 開始前 | `adaptive_negative_epoch{E}_train.json` | 每筆訓練樣本包含 `query_id`, `positive_id`, `negative_ids`（固定長度）。 |
+| Epoch 評估 | `similarity_scores_epoch{E}_eval_train.tsv` | 訓練查詢的檢索結果，供指標計算與除錯。 |
+| Epoch 評估 | `similarity_scores_epoch{E}_eval_valid.tsv` | 驗證查詢的檢索結果，產生 `eval_global_f1` 等指標。 |
+| TensorBoard | `./modernBERT_contrastive_adaptive[/ _test]/tb` | 可用 `tensorboard --logdir ...` 查看訓練與檢索指標。 |
+
+Quick Test 模式下會在 `output_dir`, `finetune_data_dir` 追加 `_test` 後綴，避免污染正式結果。
+
+---
+
+## 6. 負樣本抽樣的深入說明
+
+1. **來源**：透過 `generate_similarity_artifacts()` 計算出每個 query 對候選語料的 dot/cos 相似度。ModernBERT 模型本身在 forward 時會輸出 L2-normalized 的向量，因此 dot product ≈ cosine。
+2. **排除**：抽樣時會跳過正樣本與與查詢相同 ID 的候選（`doc_id not in pos_set and doc_id != qid`）。
+3. **機率**：score → `torch.tensor(scores) / temperature` → softmax → numpy array。`temperature < 1` 會更集中在高分候選（更難的負樣本）。
+4. **with-replacement**：若候選負樣本數量不夠，允許抽中重複 ID；程式會自動處理，確保 JSON 中每筆樣本擁有相同長度的 negative 清單。
+5. **儲存**：所有抽樣資料寫入 `JSON`，檔案名稱包含 epoch 編號，方便追蹤。
+
+---
+
+## 7. 檢索評估與指標
+
+* `fine_tune.py` 中的 `evaluate_model_retrieval()` 每個 epoch 評估 train / valid：
+  * 生成 TREC 檔 → `trec_file_to_dict()` → `my_classification_report()` → F1 / Precision / Recall。
+  * `results['valid']['f1']` 會被回傳給 Trainer 當作 `eval_global_f1`。
+* `lcr/metrics.py` 內建的 random baseline 等輔助函式可用於 sanity check。
+* 若需要額外報表，可使用 `Legal Case Retrieval/utils/eval.py`，該腳本目前也引用 `lcr.metrics` 與 `lcr.results`，會把結果寫入 `results/experiment_results.csv`。
+
+---
+
+## 8. Quick Test（流程縮小）與最佳化建議
+
+* `QUICK_TEST = True` 時會：
+  * 限縮候選檔案與 query 清單（透過 `_QT_CANDIDATE_FILES`、`_QT_TRAIN_QIDS`、`_QT_VALID_QIDS`）。
+  * 評估時只跑部分 `eval_dataset`，大幅縮短時間。
+* 建議：
+  * 調整 `batch_size`（目前為 1）可配合 GPU 記憶體情況調整，但需注意長文本會造成大量記憶體使用。
+  * 大型資料時建議使用 NVMe SSD 或 RAM Disk，以減少讀寫 TREC/JSON 的 I/O 成本。
+  * 若長時間訓練建議監控 GPU 記憶體與溫度。`pynvml` 已於程式中啟動，可根據 nvml 回傳資訊自訂監控。
+
+---
+
+## 9. 相關腳本與模組
+
+* `Legal Case Retrieval/modernBert/inference.py`：以 `get_device()` + `process_directory_to_embeddings()` 產生 candidate / query embeddings (`.pkl`)。
+* `Legal Case Retrieval/modernBert/similarity_and_rank.py`、`Legal Case Retrieval/SAILER/similarity_and_rank.py`：產生 dot/cos TREC 檔。
+* `Legal Case Retrieval/lcr/`：
+  * `data.py`：`EmbeddingsData`、`load_query_ids()` 等基礎資料結構。
+  * `embeddings.py`：批次 encode 文字、整合儲存結果。
+  * `similarity.py`：批量計算相似度（vectorized），並以穩定排序輸出 TREC。
+  * `retrieval.py`：高階 API `generate_similarity_artifacts()`，同時產生 TREC 檔與 `{qid: score_dict}`。
+  * `metrics.py` / `results.py`：評估指標與實驗結果記錄。
+  * `device.py`：裝置偵測與列印。
+
+---
+
+## 10. 常見問題
+
+| 問題 | 排除方式 |
+| ---- | -------- |
+| `ModuleNotFoundError: lcr` | 確保從專案根執行；所有腳本在開頭會自動將 `Legal Case Retrieval/` 加入 `sys.path`。 |
+| dot 與 cos 指標不一致 | 先確認 `processed_new_doc_data = EmbeddingsData.load(processed_new_doc_embedding_path)` 是否指向正確檔案（重構後已修正）；若 embeddings 相同，dot/cos 會自然接近。 |
+| Random Guess baseline 不為 0 | 這是修復型別不一致的結果（過去因 `int` vs `str`比較，顯示 0，而非真實隨機表現）。 |
+| 評估非常慢 | 使用 QUICK_TEST，或在 `coliee_dataset/task1/lht_process/modernBert/finetune_data` 清理舊檔只保留必要檔案，避免 I/O 混亂。 |
+
+---
+
+## 11. 參考流程（時間軸示意）
+
+1. **Epoch 0 前**  
+   `similarity_scores_epoch0.tsv` + `adaptive_negative_epoch0_train.json`
+2. **Epoch 0 Eval**  
+   `similarity_scores_epoch1_eval_train.tsv`、`similarity_scores_epoch1_eval_valid.tsv`
+3. **Epoch 1 前**  
+   `similarity_scores_epoch1.tsv` + `adaptive_negative_epoch1_train.json`
+4. **Epoch 1 Eval**  
+   `similarity_scores_epoch2_eval_train.tsv`、`similarity_scores_epoch2_eval_valid.tsv`
+5. **Epoch 2 前**  
+   `similarity_scores_epoch2.tsv` + `adaptive_negative_epoch2_train.json`
+
+若早停於第 2 個 epoch，則不會產生 epoch3 的訓練檔案。
+
+---
+
+## 12. 建議修改點
+
+* 調整 `generate_similarity_artifacts()` 的 `batch_size` / `max_length` 或改寫 `encode_batch()`，可對長文本 encoding 進一步最佳化。
+* 若要增加新的評估指標，可在 `evaluate_model_retrieval()` 內直接延伸 `results[split]`。
+* 若需要整合其他 embeddings（例如外部模型），將 `.pkl` 讀寫改成相同格式即可（`EmbeddingsData(ids, torch.Tensor)`）。
+
+更多細節請直接查閱程式碼，所有關鍵函數與參數都已有註解。建議從 `generate_similarity_artifacts()`、`generate_adaptive_negative_samples()` 和 `AdaptiveNegativeSamplingCallback` 開始逐步閱讀。祝順利！ 🎯

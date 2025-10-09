@@ -1,17 +1,21 @@
-import os
-from transformers import AutoTokenizer, AutoModel
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
 import torch
-import pickle
-from tqdm import tqdm
-from embeddings_data import EmbeddingsData
+from transformers import AutoModel, AutoTokenizer
+
+from lcr.data import EmbeddingsData
+from lcr.device import get_device
+from lcr.embeddings import process_directory_to_embeddings
 
 # 檢查 GPU 是否可用
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print(f"使用 GPU: {torch.cuda.get_device_name(0)}")
-else:
-    device = torch.device("cpu")
-    print("使用 CPU")
+device = get_device()
 
 # Load model and tokenizer
 tokenizer = AutoTokenizer.from_pretrained("CSHaitao/SAILER_en_finetune")
@@ -19,21 +23,12 @@ model = AutoModel.from_pretrained("CSHaitao/SAILER_en_finetune")
 
 # 將模型移動到指定的設備 (GPU 或 CPU)
 model.to(device)
+model.eval()
 
-def get_embeddings(texts, batch_size=8):
-    """Generate embeddings for a list of texts in batches"""
-    all_embeddings = []
-    
-    for i in tqdm(range(0, len(texts), batch_size)):
-        batch = texts[i:i+batch_size]
-        inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device) # 將輸入移動到設備
-        with torch.no_grad():
-            outputs = model(**inputs)
-            # Get CLS token embedding
-            embeddings = outputs.last_hidden_state[:, 0, :]
-            all_embeddings.append(embeddings.cpu()) # 將 embedding 移回 CPU 儲存 (可選)
-            
-    return torch.cat(all_embeddings, dim=0)
+def encode_batch(batch_inputs):
+    with torch.no_grad():
+        outputs = model(**batch_inputs)
+    return outputs.last_hidden_state[:, 0, :]
 
 # Path to the processed documents
 # ppp是測試的資料夾，之後正式版可以刪除
@@ -49,49 +44,35 @@ query_output_path = f"./coliee_dataset/task1/processed_new/processed_new_documen
 # Candidate 資料集處理
 # -------------------------------
 print("--------------------------")
-print(f"\n🔹 Reading candidate documents from {candidate_dataset_path}...")
-candidate_ids = []
-candidate_texts = []
-
-for filename in tqdm(os.listdir(candidate_dataset_path)):
-    if filename.endswith(".txt"):
-        doc_id = filename.replace(".txt", "")
-        file_path = os.path.join(candidate_dataset_path, filename)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            candidate_ids.append(doc_id)
-            candidate_texts.append(f.read().strip())
-
-print(f"🔹 Generating candidate embeddings for {len(candidate_texts)} documents...")
-candidate_embeddings = get_embeddings(candidate_texts)
-
-# 儲存 candidate 向量
-candidate_data = EmbeddingsData(candidate_ids, candidate_embeddings)
-print(f"💾 Saving candidate embeddings to {candidate_output_path}...")
-candidate_data.save(candidate_output_path)
+print(f"\n🔹 Encoding candidate documents located at {candidate_dataset_path} ...")
+candidate_data = process_directory_to_embeddings(
+    candidate_dataset_path,
+    candidate_output_path,
+    tokenizer,
+    encode_batch=encode_batch,
+    batch_size=8,
+    max_length=512,
+    device=device,
+    show_progress=True,
+)
+print(f"💾 Candidate embeddings saved to {candidate_output_path} ({len(candidate_data)} documents)")
 
 
 # -------------------------------
 # Query 資料集處理
 # -------------------------------
 print("--------------------------")
-print(f"\n🔹 Reading query documents from {query_dataset_path}...")
-query_ids = []
-query_texts = []
-
-for filename in tqdm(os.listdir(query_dataset_path)):
-    if filename.endswith(".txt"):
-        doc_id = filename.replace(".txt", "")
-        file_path = os.path.join(query_dataset_path, filename)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            query_ids.append(doc_id)
-            query_texts.append(f.read().strip())
-
-print(f"🔹 Generating query embeddings for {len(query_texts)} documents...")
-query_embeddings = get_embeddings(query_texts)
-
-# 儲存 query 向量
-query_data = EmbeddingsData(query_ids, query_embeddings)
-print(f"💾 Saving query embeddings to {query_output_path}...")
-query_data.save(query_output_path)
+print(f"\n🔹 Encoding query documents located at {query_dataset_path} ...")
+query_data = process_directory_to_embeddings(
+    query_dataset_path,
+    query_output_path,
+    tokenizer,
+    encode_batch=encode_batch,
+    batch_size=8,
+    max_length=512,
+    device=device,
+    show_progress=True,
+)
+print(f"💾 Query embeddings saved to {query_output_path} ({len(query_data)} documents)")
 
 print("\n✅ All embeddings saved successfully.")

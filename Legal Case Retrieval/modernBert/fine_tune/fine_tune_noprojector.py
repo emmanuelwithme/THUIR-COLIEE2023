@@ -28,13 +28,27 @@ nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
 
 # 添加路徑來import自定義模組
 import sys
+from pathlib import Path
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'utils'))
-from embeddings_data import EmbeddingsData
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.data import EmbeddingsData
 import torch.nn.functional as F
-from tqdm import tqdm
 from collections import defaultdict
 import time
+from lcr.data import load_query_ids as load_query_ids_from_utils
+from lcr.device import get_device
+from lcr.metrics import (
+    my_classification_report,
+    rel_file_to_dict as rel_file_convert,
+    trec_file_to_dict as trec_file_convert,
+)
+from lcr.retrieval import generate_similarity_artifacts
 
 # Global holder for retrieval results to reuse in TB logging callback
 _LATEST_RETRIEVAL_RESULTS = None
@@ -44,9 +58,9 @@ _EVAL_EPOCH_TAG = None  # 用於在評估時以 epoch 編號命名輸出檔
 # QUICK TEST MODE
 # -------------
 # 切換快速測試模式：True 只取極少量資料以便快速驗證流程
-QUICK_TEST = False # 如果要正式訓練，設成 False
+QUICK_TEST = True # 如果要正式訓練，設成 False
 
-# 由 main() 設定，用於 generate_embeddings_and_similarities 的覆寫資料
+# 由 main() 設定，用於 generate_similarity_artifacts 的覆寫資料
 _QT_CANDIDATE_FILES = None   # List[str] 檔名（包含 .txt）
 _QT_TRAIN_QIDS = None        # List[str]
 _QT_VALID_QIDS = None        # List[str]
@@ -54,86 +68,6 @@ _QT_VALID_QIDS = None        # List[str]
 # QUICK_TEST 數量上限（可由環境變數覆寫）
 QT_CAND_K = 20   # 候選檔案上限
 QT_QUERY_K = 5  # 訓練 query 數量上限，以及BM25選出的驗證資料(valid_dataset，用來計算eval_loss, eval_acc1, eval_acc5)數量上限
-
-
-# Import eval functions
-def my_classification_report(list_label_ohe, list_answer_ohe):
-    """
-    Calculate F1, Precision and Recall
-    從eval.py複製過來的函數
-    """  
-    true_positive = 0
-    false_positive = 0
-    false_negative = 0
-
-    for list_label, list_ohe in zip(list_label_ohe, list_answer_ohe):
-        for label in list_label:
-            if label in list_ohe:
-                true_positive += 1
-            else:
-                false_negative += 1
-        for answer in list_ohe:
-            if answer not in list_label:
-                false_positive += 1
-
-    precision = true_positive/(true_positive+false_positive) if (true_positive + false_positive)!=0 else 0.0
-    recall = true_positive/(true_positive+false_negative) if (true_positive + false_negative)!=0 else 0.0
-    f1 = 2*((precision*recall)/(precision + recall)) if (precision + recall)!=0 else 0.0
-
-    return f1, precision, recall
-
-
-def trec_file_convert(trec_path, topk):
-    """
-    Convert the 預測資料 TREC file to a dict
-    從eval.py複製過來的函數
-    """
-    trec_dict = {}
-    with open(trec_path, 'r') as trec_file:
-        for line in trec_file:
-            line = line.strip().split(' ')
-            qid = int(line[0])  # query id
-            pid = line[2]  # document id
-
-            if int(pid) == int(qid):
-                continue
-            if qid not in trec_dict:
-                trec_dict[qid] = []
-            if len(trec_dict[qid]) < topk:
-                trec_dict[qid].append(pid)
-    
-    return trec_dict
-
-
-def rel_file_convert(rel_path, valid_path):
-    """
-    Convert 相關判決書答案資料的json檔案
-    從eval.py複製過來的函數
-    """
-    valid_list = []
-    with open(valid_path, 'r') as valid_file:
-        for line in valid_file.readlines():
-            line = line.strip().split(' ')
-            qid = line[0]
-            valid_list.append(int(qid))
-
-    with open(rel_path, 'r') as rel_file:
-        label_dict = json.load(rel_file)
-    
-    rel_dict = {}
-    for qid in label_dict.keys():
-        label_list = label_dict[qid]
-        qid = int(qid.split('.')[0])
-        if qid not in valid_list:
-            continue
-        if qid not in rel_dict:
-            rel_dict[qid] = []
-        label_list = list(set(label_list))
-        for label in label_list:
-            pid = label.split('.')[0]
-            rel_dict[qid].append(pid)
-
-    return rel_dict
 
 
 def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, query_dataset_path, 
@@ -146,8 +80,8 @@ def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, q
     valid_rel_dict = rel_file_convert(labels_path, valid_qid_path)
     
     # 載入query IDs
-    train_qids = load_query_ids(train_qid_path)
-    valid_qids = load_query_ids(valid_qid_path)
+    train_qids = load_query_ids_from_utils(train_qid_path)
+    valid_qids = load_query_ids_from_utils(valid_qid_path)
     if QUICK_TEST:
         global _QT_TRAIN_QIDS, _QT_VALID_QIDS
         if _QT_TRAIN_QIDS:
@@ -171,19 +105,26 @@ def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, q
         
         # 生成相似度分數並保存TREC檔案
         epoch_tag = f"{epoch_num}_eval_{split}"
-        query_id_to_similarities = generate_embeddings_and_similarities(
-            model=model,
-            tokenizer=tokenizer,
-            device=device,
-            candidate_dataset_path=candidate_dataset_path,
-            query_dataset_path=query_dataset_path,
+        artifacts = generate_similarity_artifacts(
+            model,
+            tokenizer,
+            device,
+            candidate_dir=candidate_dataset_path,
+            query_dir=query_dataset_path,
             query_ids=qids,
-            output_dir=output_dir,
-            epoch_num=epoch_tag
+            trec_output_path=Path(output_dir) / f"similarity_scores_{epoch_tag}.tsv",
+            run_tag=f"modernBert_{epoch_tag}",
+            batch_size=1,
+            max_length=4096,
+            quick_test=QUICK_TEST,
+            candidate_files_override=_QT_CANDIDATE_FILES,
+            candidate_limit=QT_CAND_K,
+            query_limit=QT_QUERY_K,
         )
+        query_id_to_similarities = artifacts.scores
         
         # 讀取生成的TREC檔案
-        trec_path = os.path.join(output_dir, f"similarity_scores_epoch{epoch_tag}.tsv")
+        trec_path = str(artifacts.trec_path)
         answer_dict = trec_file_convert(trec_path, topk)
         
         # 準備評估資料
@@ -214,151 +155,6 @@ def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, q
     return results
 
 
-def load_query_ids(qid_path: str) -> List[str]:
-    """載入 query IDs（保留前導零，以便正確對應檔名 like 008447.txt）"""
-    qids: List[str] = []
-    with open(qid_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            qid = line.strip().split(' ')[0]
-            qids.append(qid)
-    return qids
-
-
-def generate_embeddings_and_similarities(model, tokenizer, device, candidate_dataset_path, query_dataset_path, 
-                                        query_ids, output_dir, epoch_num):
-    """
-    重用inference.py的邏輯來生成embeddings，並計算相似度分數
-    """
-    model.eval()
-    
-    def get_embeddings(texts, batch_size=1):
-        """Generate embeddings for a list of texts in batches."""
-        all_embeddings = []
-        for i in tqdm(range(0, len(texts), batch_size), desc="Generating embeddings"):
-            batch = texts[i : i + batch_size]
-            inputs = tokenizer(
-                batch,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=4096
-            ).to(device)
-
-            with torch.no_grad():
-                try:
-                    # 與 inference 一致，使用 FP16 自動混合精度以避免 dtype mismatch
-                    if torch.cuda.is_available():
-                        # 使用新的 autocast 介面
-                        with torch.amp.autocast("cuda", dtype=torch.float16):
-                            emb = model.encode({
-                                "input_ids": inputs.input_ids,
-                                "attention_mask": inputs.attention_mask,
-                            })
-                    else:
-                        emb = model.encode({
-                            "input_ids": inputs.input_ids,
-                            "attention_mask": inputs.attention_mask,
-                        })
-                    all_embeddings.append(emb.cpu())
-                except Exception as e:
-                    print(f"❌ Error in model.encode(): {e}")
-                    print(f"Model projector type: {type(model.projector)}")
-                    print(f"Model encoder type: {type(model.encoder)}")
-                    raise e
-        return torch.cat(all_embeddings, dim=0)
-
-    # 讀取candidate documents（支援 QUICK_TEST 覆寫）
-    candidate_ids = []
-    candidate_texts = []
-    if QUICK_TEST and _QT_CANDIDATE_FILES:
-        chosen_files = _QT_CANDIDATE_FILES
-    else:
-        chosen_files = [fn for fn in os.listdir(candidate_dataset_path) if fn.endswith('.txt')]
-        if QUICK_TEST:
-            k = min(QT_CAND_K, len(chosen_files))
-            if k > 0:
-                chosen_files = random.sample(chosen_files, k)
-    for filename in tqdm(chosen_files, desc="Reading candidate documents"):
-        doc_id = filename.replace(".txt", "")
-        file_path = os.path.join(candidate_dataset_path, filename)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            candidate_ids.append(doc_id)
-            candidate_texts.append(f.read().strip())
-
-    # 讀取query documents (只讀取需要的query_ids)
-    query_texts = []
-    actual_query_ids = []
-    missing = []
-    # 若 QUICK_TEST 啟用且沒有覆寫，則對傳入的 query_ids 也抽樣最多 5 筆（可重現）
-    incoming_qids = list(query_ids)
-    if QUICK_TEST:
-        try:
-            kq = min(QT_QUERY_K, len(incoming_qids))
-            if len(incoming_qids) > kq:
-                incoming_qids = random.sample(incoming_qids, kq)
-        except Exception:
-            pass
-    for qid in incoming_qids:
-        qid_str = str(qid).split('.')[0]
-        file_path = os.path.join(query_dataset_path, f"{qid_str}.txt")
-        file_path_padded = os.path.join(query_dataset_path, f"{qid_str.zfill(6)}.txt")
-        actual_path = None
-        if os.path.exists(file_path):
-            actual_path = file_path
-        elif os.path.exists(file_path_padded):
-            actual_path = file_path_padded
-        if actual_path:
-            with open(actual_path, 'r', encoding='utf-8') as f:
-                query_texts.append(f.read().strip())
-                actual_query_ids.append(qid_str)
-        else:
-            missing.append(qid_str)
-
-    print(f"🔹 Queries found: {len(actual_query_ids)}/{len(incoming_qids)} in {query_dataset_path}")
-    if len(actual_query_ids) == 0 and len(incoming_qids) > 0:
-        print(f"⚠️ None of the query files were found. Example missing IDs: {missing}")
-
-    # 生成embeddings
-    print("🔹 Generating candidate embeddings...")
-    candidate_embeddings = get_embeddings(candidate_texts)
-    print("🔹 Generating query embeddings...")
-    query_embeddings = get_embeddings(query_texts)
-
-    # 將向量搬到GPU計算相似度以加速
-    if torch.cuda.is_available():
-        candidate_embeddings = candidate_embeddings.to(device)
-        query_embeddings = query_embeddings.to(device)
-
-    # 計算相似度並輸出TREC格式
-    lines = []
-    query_id_to_similarities = {}
-
-    for i, qid in enumerate(tqdm(actual_query_ids, desc="Computing similarities")):
-        qvec = query_embeddings[i].unsqueeze(0)
-        # 使用dot product相似度
-        with torch.no_grad():
-            sims_t = torch.matmul(qvec, candidate_embeddings.T).squeeze(0)
-            sims = (sims_t if not sims_t.is_cuda else sims_t.cpu()).tolist()
-        
-        # 儲存相似度分數（使用字串型別的 qid，與 positives 的鍵一致）
-        query_id_to_similarities[str(qid)] = dict(zip(candidate_ids, sims))
-        
-        # 排序並寫入TREC格式
-        ranked = sorted(zip(candidate_ids, sims), key=lambda x: x[1], reverse=True)
-        for rank, (docid, score) in enumerate(ranked):
-            lines.append(f"{qid} Q0 {docid} {rank+1} {score} modernBert_epoch{epoch_num}")
-
-    # 儲存TREC檔案
-    trec_output_path = os.path.join(output_dir, f"similarity_scores_epoch{epoch_num}.tsv")
-    with open(trec_output_path, 'w') as f:
-        for line in lines:
-            f.write(line + '\n')
-    
-    print(f"✅ Saved similarity scores to {trec_output_path}")
-    if QUICK_TEST:
-        print(f"[QUICK_TEST] Using {len(candidate_ids)} candidates and {len(actual_query_ids)} queries")
-    model.train()  # 切回訓練模式
-    return query_id_to_similarities
 
 
 
@@ -662,12 +458,6 @@ class ModernBERTContrastive(nn.Module):
             device_map=device,
             attn_implementation="flash_attention_2",
         )
-        hidden_dim = self.encoder.config.hidden_size
-        self.projector = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
         # 可學習的 temperature（log-param 保證 >0）
         self.log_temperature = nn.Parameter(
             torch.tensor(np.log(float(temperature)), dtype=torch.float32)
@@ -682,8 +472,7 @@ class ModernBERTContrastive(nn.Module):
     def encode(self, input_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         output = self.encoder(**input_batch)
         vec = output.last_hidden_state[:, 0, :]
-        vec_project = self.projector(vec)
-        vec_l2_norm = torch.nn.functional.normalize(vec_project, p=2, dim=-1)
+        vec_l2_norm = torch.nn.functional.normalize(vec, p=2, dim=-1)
         return vec_l2_norm
     
     def encode_in_chunks(self, negatives_input, chunk_size):
@@ -694,8 +483,7 @@ class ModernBERTContrastive(nn.Module):
             end = start + chunk_size
             out = self.encoder(input_ids=ids[start:end], attention_mask=attn[start:end])
             cls = out.last_hidden_state[:,0,:]
-            proj = self.projector(cls)
-            all_vecs.append(torch.nn.functional.normalize(proj, p=2, dim=-1))
+            all_vecs.append(torch.nn.functional.normalize(cls, p=2, dim=-1))
         return torch.cat(all_vecs, dim=0)
 
     def forward(self,
@@ -762,7 +550,7 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
         
         # 載入正樣本資料和query IDs
         if train_qid_path:
-            self.train_qids = load_query_ids(train_qid_path)
+            self.train_qids = load_query_ids_from_utils(train_qid_path)
             # QUICK_TEST: 若主程式已提供縮小後的清單，採用之；否則在此抽樣最多5個
             if QUICK_TEST:
                 global _QT_TRAIN_QIDS
@@ -869,16 +657,24 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
             os.makedirs(self.finetune_data_dir, exist_ok=True)
             
             # 使用模型計算相似度分數
-            query_id_to_similarities = generate_embeddings_and_similarities(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                device=self.args.device if hasattr(self.args, 'device') else torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-                candidate_dataset_path=self.candidate_dataset_path,
-                query_dataset_path=self.query_dataset_path,
+            helper_device = self.args.device if hasattr(self.args, 'device') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            artifacts = generate_similarity_artifacts(
+                self.model,
+                self.tokenizer,
+                helper_device,
+                candidate_dir=self.candidate_dataset_path,
+                query_dir=self.query_dataset_path,
                 query_ids=self.train_qids,
-                output_dir=self.finetune_data_dir,
-                epoch_num=self.current_epoch
+                trec_output_path=Path(self.finetune_data_dir) / f"similarity_scores_epoch{self.current_epoch}.tsv",
+                run_tag=f"modernBert_epoch{self.current_epoch}",
+                batch_size=1,
+                max_length=4096,
+                quick_test=QUICK_TEST,
+                candidate_files_override=_QT_CANDIDATE_FILES,
+                candidate_limit=QT_CAND_K,
+                query_limit=QT_QUERY_K,
             )
+            query_id_to_similarities = artifacts.scores
             
             # 根據相似度分數生成新的負樣本
             new_data = generate_adaptive_negative_samples(
@@ -1016,12 +812,7 @@ class AdaptiveNegativeSamplingCallback(TrainerCallback):
 
 def main():
     # 1. 檢查 CPU / GPU
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"🚀 使用 GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("⚠️ 使用 CPU")
+    device = get_device()
 
     model_name = "answerdotai/ModernBERT-base"
     print("🔹 載入 tokenizer 與模型...")
@@ -1034,7 +825,7 @@ def main():
     # Debug: 檢查模型組件
     print(f"🔍 Debug info:")
     print(f"   - Encoder: {type(model.encoder)}")
-    print(f"   - Projector: {type(model.projector)}")
+    print(f"   - Projector: None (使用 encoder CLS 向量)")
     print(f"   - Log temperature: {model.log_temperature}, temperature(actual): {model.log_temperature.exp().item():.8f}")
     print()
 
@@ -1047,7 +838,13 @@ def main():
     valid_qid_path = "./coliee_dataset/task1/valid_qid.tsv"  # Define valid_qid_path
     labels_path = "./coliee_dataset/task1/task1_train_labels_2025.json"  # Define labels_path
     finetune_data_dir = "./coliee_dataset/task1/lht_process/modernBert/finetune_data"
-    
+
+    base_output_dir = "./modernBERT_contrastive_adaptive_noprojector"
+    if QUICK_TEST:
+        base_output_dir += "_test"
+        finetune_data_dir += "_test"
+    os.makedirs(finetune_data_dir, exist_ok=True)
+
 
     # QUICK_TEST: 準備縮小的 candidate 與 query 清單（若啟用）
     if QUICK_TEST:
@@ -1058,8 +855,8 @@ def main():
             _QT_CANDIDATE_FILES = random.sample(all_cands, k_c) if k_c > 0 else []
 
             # 預先縮小 train/valid qids
-            _QT_TRAIN_QIDS = load_query_ids(train_qid_path)
-            _QT_VALID_QIDS = load_query_ids(valid_qid_path)
+            _QT_TRAIN_QIDS = load_query_ids_from_utils(train_qid_path)
+            _QT_VALID_QIDS = load_query_ids_from_utils(valid_qid_path)
             if len(_QT_TRAIN_QIDS) > QT_QUERY_K:
                 _QT_TRAIN_QIDS = random.sample(_QT_TRAIN_QIDS, QT_QUERY_K)
             if len(_QT_VALID_QIDS) > QT_QUERY_K:
@@ -1077,14 +874,16 @@ def main():
     print(f"valid_dataset: {len(valid_dataset)}")
 
     # 5. 設定 TrainingArguments
+    logging_dir = os.path.join(base_output_dir, "tb")
+
     args = TrainingArguments(
-        output_dir="./modernBERT_contrastive_adaptive",
+        output_dir=base_output_dir,
         dataloader_num_workers=8,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         per_device_eval_batch_size=1,
         fp16=True,
-        learning_rate=5e-6,           # 給 encoder / projector
+        learning_rate=5e-6,           # 給 encoder 參數
         num_train_epochs=20,
         warmup_ratio=0.1,
         lr_scheduler_type="linear",
@@ -1102,7 +901,7 @@ def main():
         report_to=["tensorboard"],  # 啟用TensorBoard
         include_for_metrics=["loss"],
         prediction_loss_only=False,
-        logging_dir="./modernBERT_contrastive_adaptive/tb",
+        logging_dir=logging_dir,
     )
     # ✅ 給 temperature 的專屬 LR（自行調整）
     args.temperature_lr = 5e-4
@@ -1156,7 +955,7 @@ def main():
     # Summary line for QUICK_TEST
     try:
         cand_count = len(_QT_CANDIDATE_FILES) if QUICK_TEST and _QT_CANDIDATE_FILES is not None else len([fn for fn in os.listdir(doc_folder) if fn.endswith('.txt')])
-        q_count = len(_QT_TRAIN_QIDS) if QUICK_TEST and _QT_TRAIN_QIDS is not None else len(load_query_ids(train_qid_path))
+        q_count = len(_QT_TRAIN_QIDS) if QUICK_TEST and _QT_TRAIN_QIDS is not None else len(load_query_ids_from_utils(train_qid_path))
         print(f"QUICK_TEST={QUICK_TEST} | candidates={cand_count} | queries={q_count}")
     except Exception:
         print("QUICK_TEST summary error")
