@@ -2,7 +2,7 @@ import re
 import os
 import json
 
-pattern = r'\b(18\d{2}|19\d{2}|200\d|201\d|202[0-3])\b'
+pattern = r'\b(18\d{2}|19\d{2}|200\d|201\d|202[0-6])\b'
 label_file_path = "./task1_test_no_labels_2023.json"
 output_file_path = "./candidate_test.json"
 

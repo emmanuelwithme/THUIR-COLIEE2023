@@ -1,3 +1,4 @@
+# 無SFT的模型推論相似度計算
 from __future__ import annotations
 
 import sys
@@ -13,11 +14,10 @@ from lcr.similarity import compute_similarity_and_save
 
 if __name__ == "__main__":
     _device = get_device()
-    # 設定路徑
-    model_name = "modernBert"
-    # candidate判決書
+    model_name = "modernBert_fp"
+    # candidate 判決書
     processed_doc_embedding_path = f"./coliee_dataset/task1/processed/processed_document_{model_name}_embeddings.pkl"
-    # query判決書
+    # query 判決書
     processed_new_doc_embedding_path = f"./coliee_dataset/task1/processed_new/processed_new_document_{model_name}_embeddings.pkl"
     valid_qid_path = f"./coliee_dataset/task1/valid_qid.tsv"
     train_qid_path = f"./coliee_dataset/task1/train_qid.tsv"

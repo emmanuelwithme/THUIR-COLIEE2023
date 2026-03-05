@@ -38,7 +38,19 @@ if __name__ == '__main__':
     "moderBert_dot_valid": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_dot_valid.tsv',
     "moderBert_cos_valid": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_cos_valid.tsv',
     "moderBert_dot_train": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_dot_train.tsv',
-    "moderBert_cos_train": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_cos_train.tsv'
+    "moderBert_cos_train": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_cos_train.tsv',
+    "modernBert_origin_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_dot_valid.tsv',
+    "modernBert_origin_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_cos_valid.tsv',
+    "modernBert_origin_dot_train": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_dot_train.tsv',
+    "modernBert_origin_cos_train": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_cos_train.tsv',
+    "modernBert_fp_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_dot_valid.tsv',
+    "modernBert_fp_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_cos_valid.tsv',
+    "modernBert_fp_dot_train": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_dot_train.tsv',
+    "modernBert_fp_cos_train": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_cos_train.tsv',
+    "modernBert_fp_fp16_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_valid.tsv',
+    "modernBert_fp_fp16_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_valid.tsv',
+    "modernBert_fp_fp16_dot_train": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_train.tsv',
+    "modernBert_fp_fp16_cos_train": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_train.tsv',
   }
 
   for split, rel_dict in combine_rel_dict.items():
