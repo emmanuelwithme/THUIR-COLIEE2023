@@ -2,7 +2,7 @@ import json
 import os
 
 # 文件路徑
-label_path = r"C:\THUIR-COLIEE2023\coliee_dataset\task1\task1_train_labels_2025.json"
+label_path = r"coliee_dataset/task1/task1_train_labels_2025.json"
 
 # 檢查文件是否存在
 if not os.path.exists(label_path):
