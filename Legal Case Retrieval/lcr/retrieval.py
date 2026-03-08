@@ -3,13 +3,13 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import torch
 
-from .data import EmbeddingsData
+from .data import EmbeddingsData, resolve_query_candidate_scope
 from .embeddings import generate_embeddings
-from .similarity import score_queries
+from .similarity import rank_candidates_with_scores
 
 
 @dataclass
@@ -46,6 +46,9 @@ def generate_similarity_artifacts(
     candidate_limit: int = 20,
     query_limit: int = 5,
     verbose: bool = True,
+    query_to_candidate_ids: Mapping[str, Sequence[str]] | None = None,
+    query_candidate_scope_path: str | Path | None = None,
+    fallback_to_all_candidates_if_scope_missing: bool = False,
 ) -> SimilarityArtifacts:
     """
     Produce embeddings for the provided candidates and queries, compute
@@ -54,6 +57,10 @@ def generate_similarity_artifacts(
     candidate_dir = Path(candidate_dir)
     query_dir = Path(query_dir)
     trec_output_path = Path(trec_output_path)
+    resolved_scope, scope_source = resolve_query_candidate_scope(
+        query_to_candidate_ids=query_to_candidate_ids,
+        query_candidate_scope_path=query_candidate_scope_path,
+    )
 
     if quick_test and candidate_files_override:
         candidate_files = [
@@ -92,6 +99,20 @@ def generate_similarity_artifacts(
         print(f"🔹 Queries found: {len(actual_query_ids)}/{len(incoming_qids)} in {query_dir}")
         if not actual_query_ids and incoming_qids:
             print(f"⚠️ None of the query files were found. Example missing IDs: {missing_files[:5]}")
+        if resolved_scope is not None:
+            source_text = scope_source or "provided mapping"
+            print(f"🔹 Query-specific candidate scope enabled from: {source_text}")
+            unscoped = [qid for qid in actual_query_ids if qid not in resolved_scope]
+            if unscoped:
+                fallback_text = (
+                    "fallback to all candidates"
+                    if fallback_to_all_candidates_if_scope_missing
+                    else "empty candidate list"
+                )
+                print(
+                    f"⚠️ Scope missing {len(unscoped)} queries ({fallback_text}). "
+                    f"Example: {unscoped[:5]}"
+                )
         print("🔹 Generating candidate embeddings...")
 
     def encode_batch(inputs):
@@ -130,36 +151,19 @@ def generate_similarity_artifacts(
     candidate_data = EmbeddingsData(candidate_ids, candidate_embeddings)
     query_data = EmbeddingsData(actual_query_ids, query_embeddings)
 
-    ordered_qids, score_matrix, missing_from_scores = score_queries(
-        actual_query_ids,
-        query_data,
-        candidate_data,
+    lines, scores_dict, missing_from_scores = rank_candidates_with_scores(
+        query_ids=actual_query_ids,
+        query_embeddings=query_data,
+        candidate_embeddings=candidate_data,
         metric="dot",
+        run_tag=run_tag,
+        query_to_candidate_ids=resolved_scope,
+        fallback_to_all_candidates_if_scope_missing=fallback_to_all_candidates_if_scope_missing,
     )
 
     combined_missing = sorted(set(missing_files + missing_from_scores))
     if verbose and combined_missing:
         print(f"⚠️ Missing embeddings for {len(combined_missing)} queries: {combined_missing}")
-
-    lines: List[str] = []
-    scores_dict: Dict[str, Dict[str, float]] = {}
-    if ordered_qids and score_matrix is not None:
-        sorted_scores, sorted_indices = torch.sort(
-            score_matrix, dim=1, descending=True, stable=True
-        )
-        candidate_ids = candidate_data.ids
-        sorted_scores = sorted_scores.cpu()
-        sorted_indices = sorted_indices.cpu()
-
-        for row, qid in enumerate(ordered_qids):
-            row_scores: Dict[str, float] = {}
-            for rank, (idx, score) in enumerate(
-                zip(sorted_indices[row].tolist(), sorted_scores[row].tolist()), start=1
-            ):
-                doc_id = candidate_ids[idx]
-                lines.append(f"{qid} Q0 {doc_id} {rank} {score} {run_tag}")
-                row_scores[doc_id] = float(score)
-            scores_dict[qid] = row_scores
 
     trec_output_path.parent.mkdir(parents=True, exist_ok=True)
     trec_output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")

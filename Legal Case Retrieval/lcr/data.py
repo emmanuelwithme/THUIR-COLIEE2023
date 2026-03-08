@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import pickle
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, List, Mapping, Sequence, Tuple
 
 import torch
+
+QUERY_CANDIDATE_SCOPE_ENV = "LCR_QUERY_CANDIDATE_SCOPE_JSON"
 
 
 class EmbeddingsData:
@@ -84,6 +88,78 @@ class EmbeddingsData:
             stacked = torch.empty((0, embedding_dim), dtype=self.embeddings.dtype)
 
         return EmbeddingsData(selected_ids, stacked), missing
+
+
+def normalize_case_id(raw_id: object) -> str:
+    """
+    Normalise case identifiers by trimming spaces and dropping a trailing `.txt`
+    suffix.  Leading zeros are preserved.
+    """
+    normalized = str(raw_id).strip()
+    if normalized.endswith(".txt"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def normalize_query_candidate_scope(
+    raw_scope: Mapping[object, Sequence[object]]
+) -> dict[str, List[str]]:
+    """
+    Normalise a query->candidate mapping loaded from JSON or supplied in-memory.
+    Deduplicates candidate IDs while preserving order.
+    """
+    scope: dict[str, List[str]] = {}
+    for raw_qid, raw_candidates in raw_scope.items():
+        qid = normalize_case_id(raw_qid)
+        if isinstance(raw_candidates, (str, bytes)):
+            raise ValueError(
+                f"Candidates for query `{qid}` must be a sequence of IDs, not a string."
+            )
+        seen: set[str] = set()
+        normalized_candidates: List[str] = []
+        for raw_doc_id in raw_candidates:
+            doc_id = normalize_case_id(raw_doc_id)
+            if not doc_id or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            normalized_candidates.append(doc_id)
+        scope[qid] = normalized_candidates
+    return scope
+
+
+def load_query_candidate_scope(path: str | Path) -> dict[str, List[str]]:
+    """
+    Load and normalise a query->candidate scope JSON file.
+    """
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Scope file must be a JSON object: {path}")
+    return normalize_query_candidate_scope(data)
+
+
+def resolve_query_candidate_scope(
+    *,
+    query_to_candidate_ids: Mapping[object, Sequence[object]] | None = None,
+    query_candidate_scope_path: str | Path | None = None,
+    env_var: str = QUERY_CANDIDATE_SCOPE_ENV,
+) -> tuple[dict[str, List[str]] | None, str | None]:
+    """
+    Resolve query->candidate scope from explicit mapping, explicit path, or env.
+
+    Returns:
+        scope mapping (or ``None``)
+        source string (path or env-resolved path) for logging (or ``None``)
+    """
+    if query_to_candidate_ids is not None:
+        return normalize_query_candidate_scope(query_to_candidate_ids), "<in-memory>"
+
+    resolved_path = query_candidate_scope_path or os.getenv(env_var)
+    if not resolved_path:
+        return None, None
+    scope = load_query_candidate_scope(resolved_path)
+    return scope, str(resolved_path)
 
 
 def load_query_ids(path: str | Path, *, limit: int | None = None) -> List[str]:

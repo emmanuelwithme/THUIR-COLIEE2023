@@ -12,6 +12,8 @@ To be specific, we design structure-aware pre-trained language models to enhance
 
 `summary.py` file is used for extracting the summary from an unprocessed file. 
 
+`build_query_candidate_scope.py` (in `pre-process/`) builds a per-query candidate scope JSON (query -> allowed candidate ids), so retrieval can filter out future cases before similarity computation.
+
 
 ## Traditional Lexical Matching Models
 
@@ -45,6 +47,8 @@ Reference: [Link](https://github.com/jiangnanboy/learning_to_rank)
 ## Post-processing
 
 `year.py` file is used for generating the JSON file filtering by trial date. Note that this file uses raw documents, which are not included in this folder. Please make sure the necessary documents are provided before running this script.
+
+For modern `lcr` pipelines, you can move this logic into pre-filtered retrieval by setting env `LCR_QUERY_CANDIDATE_SCOPE_JSON=/path/to/query_candidate_scope.json`. Then both training-time retrieval (`generate_similarity_artifacts`) and inference-time ranking (`compute_similarity_and_save`) only score candidates in each query's scope.
 
 `grid_search.py` file is used for searching the hyperparameters (p, l, h), where `p` denotes the truncation percentage relative to the highest score, `l` denotes the minimum number of answers, and `h` denotes the maximum number of answers. This file requires two JSON files: one for year filtering and another for score results.
 

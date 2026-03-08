@@ -37,6 +37,12 @@ python "Legal Case Retrieval/modernBert/fine_tune/fine_tune.py"
   * TensorBoard：`./modernBERT_contrastive_adaptive/tb`
   * 動態負樣本 / 檢索評估：`./coliee_dataset/task1/lht_process/modernBert/finetune_data`
 
+若要在「相似度計算前」就過濾掉每個 query 的未來案例，可先用 `Legal Case Retrieval/pre-process/build_query_candidate_scope.py` 生成 scope JSON，再設定：
+
+`export LCR_QUERY_CANDIDATE_SCOPE_JSON=/path/to/query_candidate_scope.json`
+
+`lcr.retrieval.generate_similarity_artifacts()` 與 `lcr.similarity.compute_similarity_and_save()` 會自動套用此 scope。
+
 ---
 
 ## 3. 設定與可調參數

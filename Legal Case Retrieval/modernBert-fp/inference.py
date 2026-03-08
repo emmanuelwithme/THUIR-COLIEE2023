@@ -16,6 +16,7 @@ from lcr.data import EmbeddingsData
 from find_best_model import find_best_checkpoint
 
 QUICK_TEST = False
+SCOPE_FILTER = True # 使用有依照判決書年份過濾的資料來訓練的模型推論
 
 # Shared utilities package (contains reusable helpers for retrieval pipelines)
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,8 @@ if not BASE_ENCODER_DIR.exists():
     raise FileNotFoundError(f"找不到繼續預訓練後的 ModernBERT checkpoint: {BASE_ENCODER_DIR}")
 
 # 找出最佳模型checkpoint
-dir_suffix = "_test" if QUICK_TEST else ""
+dir_suffix = "_scopeFiltered" if SCOPE_FILTER else ""
+dir_suffix += "_test" if QUICK_TEST else ""
 model_root_dir = f"./modernBERT_contrastive_adaptive_fp_fp16{dir_suffix}"
 best_loss_ckpt = find_best_checkpoint(model_root_dir, "eval_loss", mode="min")
 print("最佳 eval_loss checkpoint:", best_loss_ckpt)

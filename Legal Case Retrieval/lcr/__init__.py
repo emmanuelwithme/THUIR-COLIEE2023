@@ -7,7 +7,15 @@ keep inference, similarity calculation, evaluation, and result tracking
 composable and reusable.
 """
 
-from .data import EmbeddingsData, load_query_ids, read_text_directory
+from .data import (
+    EmbeddingsData,
+    load_query_candidate_scope,
+    load_query_ids,
+    normalize_case_id,
+    normalize_query_candidate_scope,
+    read_text_directory,
+    resolve_query_candidate_scope,
+)
 from .device import get_device
 from .embeddings import (
     generate_embeddings,
@@ -21,11 +29,20 @@ from .metrics import (
     trec_file_to_dict,
 )
 from .results import record_result
-from .similarity import compute_similarity_and_save, rank_candidates, score_queries
+from .similarity import (
+    compute_similarity_and_save,
+    rank_candidates,
+    rank_candidates_with_scores,
+    score_queries,
+)
 from .retrieval import SimilarityArtifacts, generate_similarity_artifacts
 
 __all__ = [
     "EmbeddingsData",
+    "normalize_case_id",
+    "normalize_query_candidate_scope",
+    "load_query_candidate_scope",
+    "resolve_query_candidate_scope",
     "load_query_ids",
     "read_text_directory",
     "get_device",
@@ -40,6 +57,7 @@ __all__ = [
     "compute_similarity_and_save",
     "score_queries",
     "rank_candidates",
+    "rank_candidates_with_scores",
     "SimilarityArtifacts",
     "generate_similarity_artifacts",
 ]

@@ -62,6 +62,7 @@ _EVAL_EPOCH_TAG = None  # 用於在評估時以 epoch 編號命名輸出檔
 # -------------
 # 切換快速測試模式：True 只取極少量資料以便快速驗證流程
 QUICK_TEST = False # 如果要正式訓練，設成 False
+SCOPE_FILTER = True  # 依 query 年份限制候選庫，避免抽到未來判決書
 
 # 由 main() 設定，用於 generate_similarity_artifacts 的覆寫資料
 _QT_CANDIDATE_FILES = None   # List[str] 檔名（包含 .txt）
@@ -874,10 +875,31 @@ def main():
     finetune_data_dir = "./coliee_dataset/task1/lht_process/modernBert/finetune_data"
 
     base_output_dir = "./modernBERT_contrastive_adaptive_fp_fp16"
+    if SCOPE_FILTER:
+        base_output_dir += "_scopeFiltered"
     if QUICK_TEST:
         base_output_dir += "_test"
         finetune_data_dir += "_test"
     os.makedirs(finetune_data_dir, exist_ok=True)
+
+    default_scope_path = "./coliee_dataset/task1/lht_process/modernBert/query_candidate_scope.json"
+    env_scope_path = os.getenv("LCR_QUERY_CANDIDATE_SCOPE_JSON")
+    if SCOPE_FILTER:
+        if os.path.exists(default_scope_path):
+            os.environ["LCR_QUERY_CANDIDATE_SCOPE_JSON"] = default_scope_path
+            print(f"🔹 使用 query candidate scope: {os.environ['LCR_QUERY_CANDIDATE_SCOPE_JSON']}")
+        elif env_scope_path:
+            print(f"🔹 使用 query candidate scope: {env_scope_path}")
+        else:
+            raise FileNotFoundError(
+                "SCOPE_FILTER=True 但找不到 query candidate scope。"
+                "請先生成 ./coliee_dataset/task1/lht_process/modernBert/query_candidate_scope.json"
+            )
+    else:
+        if env_scope_path:
+            print(f"🔹 使用 query candidate scope: {env_scope_path}")
+        else:
+            print("⚠️ 未設定 query candidate scope；將對全部 candidates 計算相似度。")
     
 
     # QUICK_TEST: 準備縮小的 candidate 與 query 清單（若啟用）

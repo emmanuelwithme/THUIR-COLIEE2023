@@ -878,6 +878,15 @@ def main():
         base_output_dir += "_test"
         finetune_data_dir += "_test"
     os.makedirs(finetune_data_dir, exist_ok=True)
+
+    default_scope_path = "./coliee_dataset/task1/lht_process/modernBert/query_candidate_scope.json"
+    if os.path.exists(default_scope_path):
+        os.environ.setdefault("LCR_QUERY_CANDIDATE_SCOPE_JSON", default_scope_path)
+        print(f"🔹 使用 query candidate scope: {os.environ['LCR_QUERY_CANDIDATE_SCOPE_JSON']}")
+    elif os.getenv("LCR_QUERY_CANDIDATE_SCOPE_JSON"):
+        print(f"🔹 使用 query candidate scope: {os.environ['LCR_QUERY_CANDIDATE_SCOPE_JSON']}")
+    else:
+        print("⚠️ 未設定 query candidate scope；將對全部 candidates 計算相似度。")
     
 
     # QUICK_TEST: 準備縮小的 candidate 與 query 清單（若啟用）

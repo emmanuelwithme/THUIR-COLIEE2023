@@ -23,6 +23,14 @@ if __name__ == "__main__":
     output_dot_valid_path = f"./coliee_dataset/task1/lht_process/{model_name}/output_{model_name}_dot_valid.tsv"
     output_cos_valid_path = f"./coliee_dataset/task1/lht_process/{model_name}/output_{model_name}_cos_valid.tsv"
     output_cos_train_path = f"./coliee_dataset/task1/lht_process/{model_name}/output_{model_name}_cos_train.tsv"
+    query_candidate_scope_path = Path(
+        f"./coliee_dataset/task1/lht_process/{model_name}/query_candidate_scope.json"
+    )
+    if query_candidate_scope_path.exists():
+        print(f"🔹 使用 query candidate scope: {query_candidate_scope_path}")
+    else:
+        print("⚠️ 未找到 query candidate scope，將對全部 candidates 計分。")
+        query_candidate_scope_path = None
 
     # 載入 embeddings
     processed_doc_data = EmbeddingsData.load(processed_doc_embedding_path)
@@ -48,6 +56,7 @@ if __name__ == "__main__":
                 output_path,
                 metric=metric,
                 run_tag=f"{model_name}_{metric}",
+                query_candidate_scope_path=query_candidate_scope_path,
             )
             if missing:
                 print(f"⚠️ {split_name} split 缺少 {len(missing)} 個查詢向量：{missing}")
