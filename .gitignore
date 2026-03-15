@@ -18,3 +18,5 @@ __pycache__/
 .cursorignore
 .env
 stage3-4096-encoder-laststep-777/
+#task 2的相關資料
+Legal Case Entailment by Mou/data/task2_2026_prepared
