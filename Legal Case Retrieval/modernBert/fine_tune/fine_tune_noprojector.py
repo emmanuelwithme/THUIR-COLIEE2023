@@ -37,6 +37,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 from lcr.data import EmbeddingsData
 import torch.nn.functional as F
 from collections import defaultdict
@@ -631,7 +636,7 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
         """載入BM25備用資料作為初始訓練資料"""
         try:
             # 使用專案根目錄為基準的正確路徑
-            backup_json_path = "./coliee_dataset/task1/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_train.json"
+            backup_json_path = f"{TASK1_DIR}/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_train.json"
             if os.path.exists(backup_json_path):
                 with open(backup_json_path, 'r', encoding='utf-8') as f:
                     backup_data = json.load(f)
@@ -830,22 +835,23 @@ def main():
     print()
 
     # 3. 設定路徑
-    doc_folder = "./coliee_dataset/task1/processed"
-    query_dataset_path = "./coliee_dataset/task1/processed" #query可以用processed或processed_new資料夾下的文件
-    train_qid_path = "./coliee_dataset/task1/train_qid.tsv"
-    positive_train_json_path = "./coliee_dataset/task1/task1_train_labels_2025_train.json"
-    valid_json_path = "./coliee_dataset/task1/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_valid.json"
-    valid_qid_path = "./coliee_dataset/task1/valid_qid.tsv"  # Define valid_qid_path
-    labels_path = "./coliee_dataset/task1/task1_train_labels_2025.json"  # Define labels_path
-    finetune_data_dir = "./coliee_dataset/task1/lht_process/modernBert/finetune_data"
+    doc_folder = f"{TASK1_DIR}/processed"
+    query_dataset_path = f"{TASK1_DIR}/processed" #query可以用processed或processed_new資料夾下的文件
+    train_qid_path = f"{TASK1_DIR}/train_qid.tsv"
+    positive_train_json_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}_train.json"
+    valid_json_path = f"{TASK1_DIR}/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_valid.json"
+    valid_qid_path = f"{TASK1_DIR}/valid_qid.tsv"  # Define valid_qid_path
+    labels_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"  # Define labels_path
+    finetune_data_dir = f"{TASK1_DIR}/lht_process/modernBert/finetune_data"
 
     base_output_dir = "./modernBERT_contrastive_adaptive_noprojector"
     if QUICK_TEST:
         base_output_dir += "_test"
         finetune_data_dir += "_test"
+    base_output_dir += f"_{TASK1_YEAR}"
     os.makedirs(finetune_data_dir, exist_ok=True)
 
-    default_scope_path = "./coliee_dataset/task1/lht_process/modernBert/query_candidate_scope.json"
+    default_scope_path = f"{TASK1_DIR}/lht_process/modernBert/query_candidate_scope.json"
     if os.path.exists(default_scope_path):
         os.environ.setdefault("LCR_QUERY_CANDIDATE_SCOPE_JSON", default_scope_path)
         print(f"🔹 使用 query candidate scope: {os.environ['LCR_QUERY_CANDIDATE_SCOPE_JSON']}")

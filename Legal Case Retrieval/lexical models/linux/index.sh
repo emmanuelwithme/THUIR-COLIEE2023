@@ -1,8 +1,36 @@
 # linux用此腳本建立索引
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
+
+# Preserve caller-provided env values so `.env` won't override them.
+_CALLER_COLIEE_TASK1_YEAR="${COLIEE_TASK1_YEAR:-}"
+_CALLER_COLIEE_TASK1_ROOT="${COLIEE_TASK1_ROOT:-}"
+_CALLER_COLIEE_TASK1_DIR="${COLIEE_TASK1_DIR:-}"
+
+if [ -f "${REPO_ROOT}/.env" ]; then
+  set -a
+  . "${REPO_ROOT}/.env"
+  set +a
+fi
+
+if [ -n "${_CALLER_COLIEE_TASK1_YEAR}" ]; then
+  COLIEE_TASK1_YEAR="${_CALLER_COLIEE_TASK1_YEAR}"
+fi
+if [ -n "${_CALLER_COLIEE_TASK1_ROOT}" ]; then
+  COLIEE_TASK1_ROOT="${_CALLER_COLIEE_TASK1_ROOT}"
+fi
+if [ -n "${_CALLER_COLIEE_TASK1_DIR}" ]; then
+  COLIEE_TASK1_DIR="${_CALLER_COLIEE_TASK1_DIR}"
+fi
+
+COLIEE_TASK1_YEAR="${COLIEE_TASK1_YEAR:-2025}"
+COLIEE_TASK1_ROOT="${COLIEE_TASK1_ROOT:-./coliee_dataset/task1}"
+TASK1_DIR="${COLIEE_TASK1_DIR:-${COLIEE_TASK1_ROOT}/${COLIEE_TASK1_YEAR}}"
+
 python -m pyserini.index.lucene \
   --collection JsonCollection \
-  --input ./coliee_dataset/task1/lht_process/BM25/corpus \
-  --index ./coliee_dataset/task1/lht_process/BM25/index \
+  --input "${TASK1_DIR}/lht_process/BM25/corpus" \
+  --index "${TASK1_DIR}/lht_process/BM25/index" \
   --generator DefaultLuceneDocumentGenerator \
   --threads 28 \
   --storePositions --storeDocvectors --storeRaw \

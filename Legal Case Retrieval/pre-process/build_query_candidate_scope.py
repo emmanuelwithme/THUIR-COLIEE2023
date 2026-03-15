@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir
+
 
 DEFAULT_YEAR_PATTERN = r"\b(18\d{2}|19\d{2}|200\d|201\d|202[0-6])\b"
 
@@ -243,8 +249,7 @@ def _build_default_args_from_repo_root() -> argparse.Namespace:
     Default configuration for running directly from this repository:
       python "Legal Case Retrieval/pre-process/build_query_candidate_scope.py"
     """
-    repo_root = Path(__file__).resolve().parents[2]
-    task1_root = repo_root / "coliee_dataset" / "task1"
+    task1_root = Path(get_task1_dir())
 
     candidate_dir = task1_root / "processed"
     query_dir = task1_root / "processed"

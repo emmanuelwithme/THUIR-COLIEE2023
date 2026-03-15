@@ -9,6 +9,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 import torch
 from transformers import AutoTokenizer
 
@@ -45,7 +50,7 @@ device = get_device()
 # 找出最佳模型checkpoint
 dir_suffix = "_scopeFiltered" if SCOPE_FILTER else ""
 dir_suffix += "_test" if QUICK_TEST else ""
-model_root_dir = f"./modernBERT_contrastive_adaptive{dir_suffix}"
+model_root_dir = f"./modernBERT_contrastive_adaptive{dir_suffix}_{TASK1_YEAR}"
 best_loss_ckpt = find_best_checkpoint(model_root_dir, "eval_loss", mode="min")
 print("最佳 eval_loss checkpoint:", best_loss_ckpt)
 best_acc1_ckpt = find_best_checkpoint(model_root_dir, "eval_acc1", mode="max")
@@ -75,11 +80,11 @@ def encode_batch(batch_inputs):
 # processed_new資料夾底下的文檔是前處理只取引用前後句。在原論文中用做query。processed在原論文中用做candidate。
 model_name = "modernBert"
 print(f"------Using {model_name} to encode documents------\n")
-candidate_dataset_path = "./coliee_dataset/task1/processed"
-query_dataset_path = "./coliee_dataset/task1/processed_new"
+candidate_dataset_path = f"{TASK1_DIR}/processed"
+query_dataset_path = f"{TASK1_DIR}/processed_new"
 suffix = "_test" if QUICK_TEST else ""
-candidate_output_path = f"./coliee_dataset/task1/processed/processed_document_{model_name}_embeddings{suffix}.pkl"
-query_output_path = f"./coliee_dataset/task1/processed_new/processed_new_document_{model_name}_embeddings{suffix}.pkl"
+candidate_output_path = f"{TASK1_DIR}/processed/processed_document_{model_name}_embeddings{suffix}.pkl"
+query_output_path = f"{TASK1_DIR}/processed_new/processed_new_document_{model_name}_embeddings{suffix}.pkl"
 if QUICK_TEST:
     print("⚙️  QUICK_TEST 模式啟用：使用測試模型與輸出路徑")
 

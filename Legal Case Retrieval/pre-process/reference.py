@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 from langdetect import detect
 from langdetect import detect_langs
 from langdetect import DetectorFactory
@@ -7,6 +8,17 @@ import nltk
 from tqdm import tqdm
 import multiprocessing
 from functools import partial
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 # nltk.download('punkt') # 使用 pickle 格式來存儲 tokenizer 模型，舊版，不安全，已棄用
 nltk.download('punkt_tab') # nltk 3.8.2 或更新
 DetectorFactory.seed = 0
@@ -151,9 +163,9 @@ def process_file(name, input_dir, processed_dir, output_dir):
         f.write(txt)
 
 if __name__ == "__main__":
-    input_dir = "./coliee_dataset/task1/task1_train_files_2025"
-    processed_dir = "./coliee_dataset/task1/processed"
-    output_dir = "./coliee_dataset/task1/processed_new"
+    input_dir = f"{TASK1_DIR}/task1_train_files_{TASK1_YEAR}"
+    processed_dir = f"{TASK1_DIR}/processed"
+    output_dir = f"{TASK1_DIR}/processed_new"
     
     # 確保輸出目錄存在
     os.makedirs(output_dir, exist_ok=True)

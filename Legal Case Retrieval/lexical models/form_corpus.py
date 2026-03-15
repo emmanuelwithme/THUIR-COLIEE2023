@@ -1,15 +1,25 @@
 import json
 import os
 import re
+import sys
+from pathlib import Path
 from tqdm import tqdm
 import stat
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir
+
+TASK1_DIR = get_task1_dir()
+
 # 定義路徑
-raw_path = './coliee_dataset/task1/processed'
+raw_path = f"{TASK1_DIR}/processed"
 file_dir = os.listdir(raw_path)
 
 # 定義目標資料夾
-output_dir = './coliee_dataset/task1/lht_process/BM25/corpus'
+output_dir = f"{TASK1_DIR}/lht_process/BM25/corpus"
 
 # 確保目標資料夾存在，如果不存在則自動創建
 os.makedirs(output_dir, exist_ok=True)
@@ -63,6 +73,6 @@ for a_file in tqdm(file_dir):
     # outline = json.dumps(save_dict,ensure_ascii=False)+'\n'
     # outfile.write(outline)
     # # break
-# with open('./coliee_dataset/task1/corpus_all.json','w',encoding='utf-8') as fp:
+# with open(f"{TASK1_DIR}/corpus_all.json", "w", encoding="utf-8") as fp:
 #     json.dump(save_dict,fp,ensure_ascii=False)
 print(f"✅ JSON 檔案已成功寫入至 {outfile.name}")

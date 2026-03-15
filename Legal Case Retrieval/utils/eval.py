@@ -14,13 +14,17 @@ from lcr.metrics import (
     trec_file_to_dict as trec_file_convert,
 )
 from lcr.results import record_result
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
 
 
 if __name__ == '__main__':
   # === 標準答案設定 ===
-  rel_path = 'coliee_dataset/task1/task1_train_labels_2025.json'
-  valid_path = 'coliee_dataset/task1/valid_qid.tsv'
-  train_path = 'coliee_dataset/task1/train_qid.tsv'
+  rel_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"
+  valid_path = f"{TASK1_DIR}/valid_qid.tsv"
+  train_path = f"{TASK1_DIR}/train_qid.tsv"
   topk = 5 # topk
   
   # === 讀取正確答案（只取 valid 查詢）===
@@ -30,27 +34,27 @@ if __name__ == '__main__':
 
   # === 預測答案設定(需在value相似度分數與排名路徑中有valid或train，如果沒有會跳過) ===
   models = {
-    "BM25_valid": 'coliee_dataset/task1/lht_process/BM25/output_bm25_valid.tsv',
-    "SAILER_en_finetune_by_CSHaitao_Dot_valid": 'coliee_dataset/task1/lht_process/SAILER/output_SAILER_dot_valid.tsv',
-    "SAILER_en_finetune_by_CSHaitao_Cos_valid": 'coliee_dataset/task1/lht_process/SAILER/output_SAILER_cos_valid.tsv',
-    "SAILER_en_finetune_by_CSHaitao_Dot_train": 'coliee_dataset/task1/lht_process/SAILER/output_SAILER_dot_train.tsv',
-    "SAILER_en_finetune_by_CSHaitao_Cos_train": 'coliee_dataset/task1/lht_process/SAILER/output_SAILER_cos_train.tsv',
-    "moderBert_dot_valid": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_dot_valid.tsv',
-    "moderBert_cos_valid": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_cos_valid.tsv',
-    "moderBert_dot_train": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_dot_train.tsv',
-    "moderBert_cos_train": 'coliee_dataset/task1/lht_process/modernBert/output_modernBert_cos_train.tsv',
-    "modernBert_origin_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_dot_valid.tsv',
-    "modernBert_origin_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_cos_valid.tsv',
-    "modernBert_origin_dot_train": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_dot_train.tsv',
-    "modernBert_origin_cos_train": 'coliee_dataset/task1/lht_process/modernBert_origin/output_modernBert_origin_cos_train.tsv',
-    "modernBert_fp_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_dot_valid.tsv',
-    "modernBert_fp_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_cos_valid.tsv',
-    "modernBert_fp_dot_train": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_dot_train.tsv',
-    "modernBert_fp_cos_train": 'coliee_dataset/task1/lht_process/modernBert_fp/output_modernBert_fp_cos_train.tsv',
-    "modernBert_fp_fp16_dot_valid": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_valid.tsv',
-    "modernBert_fp_fp16_cos_valid": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_valid.tsv',
-    "modernBert_fp_fp16_dot_train": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_train.tsv',
-    "modernBert_fp_fp16_cos_train": 'coliee_dataset/task1/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_train.tsv',
+    "BM25_valid": f"{TASK1_DIR}/lht_process/BM25/output_bm25_valid.tsv",
+    "SAILER_en_finetune_by_CSHaitao_Dot_valid": f"{TASK1_DIR}/lht_process/SAILER/output_SAILER_dot_valid.tsv",
+    "SAILER_en_finetune_by_CSHaitao_Cos_valid": f"{TASK1_DIR}/lht_process/SAILER/output_SAILER_cos_valid.tsv",
+    "SAILER_en_finetune_by_CSHaitao_Dot_train": f"{TASK1_DIR}/lht_process/SAILER/output_SAILER_dot_train.tsv",
+    "SAILER_en_finetune_by_CSHaitao_Cos_train": f"{TASK1_DIR}/lht_process/SAILER/output_SAILER_cos_train.tsv",
+    "moderBert_dot_valid": f"{TASK1_DIR}/lht_process/modernBert/output_modernBert_dot_valid.tsv",
+    "moderBert_cos_valid": f"{TASK1_DIR}/lht_process/modernBert/output_modernBert_cos_valid.tsv",
+    "moderBert_dot_train": f"{TASK1_DIR}/lht_process/modernBert/output_modernBert_dot_train.tsv",
+    "moderBert_cos_train": f"{TASK1_DIR}/lht_process/modernBert/output_modernBert_cos_train.tsv",
+    "modernBert_origin_dot_valid": f"{TASK1_DIR}/lht_process/modernBert_origin/output_modernBert_origin_dot_valid.tsv",
+    "modernBert_origin_cos_valid": f"{TASK1_DIR}/lht_process/modernBert_origin/output_modernBert_origin_cos_valid.tsv",
+    "modernBert_origin_dot_train": f"{TASK1_DIR}/lht_process/modernBert_origin/output_modernBert_origin_dot_train.tsv",
+    "modernBert_origin_cos_train": f"{TASK1_DIR}/lht_process/modernBert_origin/output_modernBert_origin_cos_train.tsv",
+    "modernBert_fp_dot_valid": f"{TASK1_DIR}/lht_process/modernBert_fp/output_modernBert_fp_dot_valid.tsv",
+    "modernBert_fp_cos_valid": f"{TASK1_DIR}/lht_process/modernBert_fp/output_modernBert_fp_cos_valid.tsv",
+    "modernBert_fp_dot_train": f"{TASK1_DIR}/lht_process/modernBert_fp/output_modernBert_fp_dot_train.tsv",
+    "modernBert_fp_cos_train": f"{TASK1_DIR}/lht_process/modernBert_fp/output_modernBert_fp_cos_train.tsv",
+    "modernBert_fp_fp16_dot_valid": f"{TASK1_DIR}/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_valid.tsv",
+    "modernBert_fp_fp16_cos_valid": f"{TASK1_DIR}/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_valid.tsv",
+    "modernBert_fp_fp16_dot_train": f"{TASK1_DIR}/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_dot_train.tsv",
+    "modernBert_fp_fp16_cos_train": f"{TASK1_DIR}/lht_process/modernBert_fp_fp16/output_modernBert_fp_fp16_cos_train.tsv",
   }
 
   for split, rel_dict in combine_rel_dict.items():
@@ -61,13 +65,20 @@ if __name__ == '__main__':
          print(f"現在在比對{split}正確答案...")
          print(f"{model_name}: {trec_path} 這個路徑中沒有{split}，跳過!")
          continue
+      trec_file = Path(trec_path)
+      if not trec_file.exists():
+        print(f"{model_name}: 找不到檔案 {trec_path}，跳過!")
+        continue
       answer_dict = trec_file_convert(trec_path, topk)
       
       list_answer_ohe = [] #預測答案
       list_label_ohe = [] #真實答案
+      missing_pred_qids = 0
       
       for qid in rel_dict.keys(): #遍歷在驗證答案裡的每個query id
-        one_answer = answer_dict[qid] #預測 e.g., ['000123', '000456', '000789']
+        one_answer = answer_dict.get(qid, []) #預測 e.g., ['000123', '000456', '000789']
+        if not one_answer:
+          missing_pred_qids += 1
         one_rel = rel_dict[qid] #真實
         one_answer = [int(pid) for pid in one_answer] #轉型 e.g., [123, 456, 789]
         one_rel = [int(pid) for pid in one_rel] #轉型
@@ -79,6 +90,8 @@ if __name__ == '__main__':
       print('Precision',precision)
       print('Recall',recall)
       print('F1_Score',f1)
+      if missing_pred_qids:
+        print(f"⚠️ {model_name} 在 {split} 缺少 {missing_pred_qids} 個 query 的預測結果（以空集合計分）")
 
       # record to csv
       record_result(

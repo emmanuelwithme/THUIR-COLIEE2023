@@ -1,7 +1,18 @@
 import json
+import sys
 from typing import Dict, List, Set
 from collections import defaultdict
 import random
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
 
 def read_bm25_output_trec(tsv_path: str, top_k: int = 100) -> Dict[str, List[str]]:
     """讀取 TREC 格式 BM25 檢索結果，補齊 query_id 和 doc_id 至 6 位數"""
@@ -90,10 +101,10 @@ def generate_contrastive_json(
 
 if __name__ == "__main__":
     # ==== 🚀 產生 Train Set 的 JSON ====
-    bm25_train_path = './coliee_dataset/task1/lht_process/BM25/output_bm25_train.tsv'
-    positive_train_json_path = './coliee_dataset/task1/task1_train_labels_2025_train.json'
+    bm25_train_path = f"{TASK1_DIR}/lht_process/BM25/output_bm25_train.tsv"
+    positive_train_json_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}_train.json"
     # 將原本的檔名改為你想要的名字：
-    output_train_json_path = './coliee_dataset/task1/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_train.json'
+    output_train_json_path = f"{TASK1_DIR}/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_train.json"
 
     generate_contrastive_json(
         bm25_path=bm25_train_path,
@@ -105,10 +116,10 @@ if __name__ == "__main__":
     )
 
     # ==== 🚀 產生 Valid Set 的 JSON ====
-    bm25_valid_path = './coliee_dataset/task1/lht_process/BM25/output_bm25_valid.tsv'
-    positive_valid_json_path = './coliee_dataset/task1/task1_train_labels_2025_valid.json'
+    bm25_valid_path = f"{TASK1_DIR}/lht_process/BM25/output_bm25_valid.tsv"
+    positive_valid_json_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}_valid.json"
     # 同樣把驗證集檔名改為你想要的名字：
-    output_valid_json_path = './coliee_dataset/task1/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_valid.json'
+    output_valid_json_path = f"{TASK1_DIR}/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_valid.json"
 
     generate_contrastive_json(
         bm25_path=bm25_valid_path,

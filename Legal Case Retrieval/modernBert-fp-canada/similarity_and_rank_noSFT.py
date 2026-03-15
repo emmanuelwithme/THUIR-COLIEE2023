@@ -1,4 +1,4 @@
-# 有SFT的模型推論相似度計算
+# 無SFT的模型推論相似度計算
 from __future__ import annotations
 
 import sys
@@ -19,7 +19,7 @@ from lcr.similarity import compute_similarity_and_save
 
 if __name__ == "__main__":
     _device = get_device()
-    model_name = "modernBert_fp_fp16"
+    model_name = "modernBert_fp_canada"
     # candidate 判決書
     processed_doc_embedding_path = f"{TASK1_DIR}/processed/processed_document_{model_name}_embeddings.pkl"
     # query 判決書
@@ -30,17 +30,13 @@ if __name__ == "__main__":
     output_dot_valid_path = f"{TASK1_DIR}/lht_process/{model_name}/output_{model_name}_dot_valid.tsv"
     output_cos_valid_path = f"{TASK1_DIR}/lht_process/{model_name}/output_{model_name}_cos_valid.tsv"
     output_cos_train_path = f"{TASK1_DIR}/lht_process/{model_name}/output_{model_name}_cos_train.tsv"
-    model_scope_path = Path(f"{TASK1_DIR}/lht_process/{model_name}/query_candidate_scope.json")
-    shared_scope_path = Path(f"{TASK1_DIR}/lht_process/modernBert/query_candidate_scope.json")
-    if model_scope_path.exists():
-        query_candidate_scope_path = model_scope_path
+    query_candidate_scope_path = Path(
+        f"{TASK1_DIR}/lht_process/{model_name}/query_candidate_scope.json"
+    )
+    if query_candidate_scope_path.exists():
         print(f"🔹 使用 query candidate scope: {query_candidate_scope_path}")
-    elif shared_scope_path.exists():
-        query_candidate_scope_path = shared_scope_path
-        print(f"🔹 未找到 {model_scope_path}，改用共用 scope: {query_candidate_scope_path}")
     else:
-        print(f"⚠️ 未找到 {model_scope_path}，也未找到 {shared_scope_path}。")
-        print("⚠️ 將對全部 candidates 計分。")
+        print("⚠️ 未找到 query candidate scope，將對全部 candidates 計分。")
         query_candidate_scope_path = None
 
     # 載入 embeddings

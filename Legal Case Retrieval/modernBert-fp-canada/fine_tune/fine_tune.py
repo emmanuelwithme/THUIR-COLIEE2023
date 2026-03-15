@@ -2,6 +2,9 @@ import os
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 import torch
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
 # torch.set_float32_matmul_precision('high')
 import json
 from torch import nn
@@ -456,12 +459,19 @@ class ContrastiveCollator:
 class ModernBERTContrastive(nn.Module):
     def __init__(self, model_name: str, device, temperature: float = 0.55555):
         super().__init__()
-        # 與 inference.py 保持一致的 encoder_kwargs 設定
+        # 與 inference.py 保持一致的 encoder_kwargs 設定；fp16 由 Trainer 的 AMP 控制，權重維持 fp32
+        device_str = str(device)
+        dtype = torch.float32
+        device_map = {"": device_str}
         self.encoder = ModernBertModel.from_pretrained(
             model_name,
-            device_map=device,
+            device_map=device_map,
             attn_implementation="flash_attention_2",
+            torch_dtype=dtype,
+            trust_remote_code=True,
         )
+        # 確保權重直接放到指定裝置並維持 fp32
+        self.encoder.to(device=device, dtype=dtype)
         hidden_dim = self.encoder.config.hidden_size
         self.projector = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
@@ -478,6 +488,15 @@ class ModernBERTContrastive(nn.Module):
         self.encoder.config.use_cache = False
         self.encoder.enable_input_require_grads() # 打開訓練效果會好點，可以學習id->embedding
         self.encoder.gradient_checkpointing_enable()
+
+    # 供 Trainer 呼叫，維持介面與 huggingface 模型一致
+    def gradient_checkpointing_enable(self, **kwargs):
+        if hasattr(self.encoder, "gradient_checkpointing_enable"):
+            self.encoder.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self):
+        if hasattr(self.encoder, "gradient_checkpointing_disable"):
+            self.encoder.gradient_checkpointing_disable()
 
     def encode(self, input_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         output = self.encoder(**input_batch)
@@ -826,9 +845,13 @@ def main():
     # 1. 檢查 CPU / GPU
     device = get_device()
 
-    model_name = "answerdotai/ModernBERT-base"
+    ckpt_dir = (PACKAGE_ROOT.parent / "stage3-4096-encoder-laststep-777").resolve()
+    if not ckpt_dir.exists():
+        raise FileNotFoundError(f"找不到繼續預訓練後的 ModernBERT checkpoint: {ckpt_dir}")
+
+    model_name = str(ckpt_dir)
     print("🔹 載入 tokenizer 與模型...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     # 2. 初始化自定義的 Contrastive Model
     model = ModernBERTContrastive(model_name, device)
@@ -839,6 +862,11 @@ def main():
     print(f"   - Encoder: {type(model.encoder)}")
     print(f"   - Projector: {type(model.projector)}")
     print(f"   - Log temperature: {model.log_temperature}, temperature(actual): {model.log_temperature.exp().item():.8f}")
+    try:
+        sample_param = next(model.parameters())
+        print(f"   - Model dtype/device: {sample_param.dtype} @ {sample_param.device}")
+    except StopIteration:
+        pass
     print()
 
     # 3. 設定路徑
@@ -849,9 +877,9 @@ def main():
     valid_json_path = f"{TASK1_DIR}/lht_process/modernBert/finetune_data/contrastive_bm25_hard_negative_top100_random15_valid.json"
     valid_qid_path = f"{TASK1_DIR}/valid_qid.tsv"  # Define valid_qid_path
     labels_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"  # Define labels_path
-    finetune_data_dir = f"{TASK1_DIR}/lht_process/modernBert/finetune_data"
+    finetune_data_dir = f"{TASK1_DIR}/lht_process/modernBert_fp_fp16_canada/finetune_data"
 
-    base_output_dir = "./modernBERT_contrastive_adaptive"
+    base_output_dir = "./modernBERT_contrastive_adaptive_fp_fp16_canada"
     if SCOPE_FILTER:
         base_output_dir += "_scopeFiltered"
     if QUICK_TEST:
@@ -917,11 +945,13 @@ def main():
         gradient_accumulation_steps=4,
         per_device_eval_batch_size=1,
         fp16=True,
+        bf16=False,
+        tf32=False,
         learning_rate=5e-6,           # 給 encoder / projector
         num_train_epochs=20,
         warmup_ratio=0.1,
         lr_scheduler_type="linear",
-        optim="adamw_torch_fused",  # 使用穩定的 AdamW 以配合 AMP
+        optim="adamw_torch_fused",  # 使用穩定的 AdamW 以配合 bf16 + TF32
         logging_strategy="steps",
         logging_steps=50,
         eval_strategy="epoch",
@@ -939,6 +969,7 @@ def main():
     )
     # ✅ 給 temperature 的專屬 LR（自行調整）
     args.temperature_lr = 5e-4
+    print(f"   - Trainer bf16/fp16/tf32: bf16={args.bf16}, fp16={args.fp16}, tf32={args.tf32}")
 
     # 6. 建立 Trainer（使用 AdaptiveNegativeSamplingTrainer）
     trainer = AdaptiveNegativeSamplingTrainer(

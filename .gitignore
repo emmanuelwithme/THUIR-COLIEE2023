@@ -16,3 +16,5 @@ __pycache__/
 # AI
 .codeiumignore
 .cursorignore
+.env
+stage3-4096-encoder-laststep-777/

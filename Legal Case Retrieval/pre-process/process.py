@@ -1,11 +1,23 @@
 import os
 import re
+import sys
 from langdetect import detect
 from langdetect import detect_langs
 from langdetect import DetectorFactory
 from tqdm import tqdm
 import multiprocessing
 from functools import partial
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 DetectorFactory.seed = 0
 
 def is_sentence(s):
@@ -121,9 +133,9 @@ def process_file(name, input_dir, summary_dir, output_dir, have_sum):
         f.write(txt)
 
 if __name__ == "__main__":
-    input_dir = "./coliee_dataset/task1/task1_train_files_2025"
-    summary_dir = "./coliee_dataset/task1/summary"
-    output_dir = "./coliee_dataset/task1/processed"
+    input_dir = f"{TASK1_DIR}/task1_train_files_{TASK1_YEAR}"
+    summary_dir = f"{TASK1_DIR}/summary"
+    output_dir = f"{TASK1_DIR}/processed"
     
     # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)

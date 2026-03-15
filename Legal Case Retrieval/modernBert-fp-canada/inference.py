@@ -39,14 +39,15 @@ from modernbert_contrastive_model import ModernBERTContrastive, ContrastiveConfi
 device = get_device()
 
 # 繼續預訓練的 ModernBERT checkpoint（提供 backbone config）
-BASE_ENCODER_DIR = Path(__file__).resolve().parents[2] / "modernbert-caselaw-accsteps-fp" / "checkpoint-29000"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BASE_ENCODER_DIR = (REPO_ROOT / "stage3-4096-encoder-laststep-777").resolve()
 if not BASE_ENCODER_DIR.exists():
     raise FileNotFoundError(f"找不到繼續預訓練後的 ModernBERT checkpoint: {BASE_ENCODER_DIR}")
 
 # 找出最佳模型checkpoint
 dir_suffix = "_scopeFiltered" if SCOPE_FILTER else ""
 dir_suffix += "_test" if QUICK_TEST else ""
-model_root_dir = f"./modernBERT_contrastive_adaptive_fp_fp16{dir_suffix}_{TASK1_YEAR}"
+model_root_dir = f"./modernBERT_contrastive_adaptive_fp_fp16_canada{dir_suffix}_{TASK1_YEAR}"
 best_loss_ckpt = find_best_checkpoint(model_root_dir, "eval_loss", mode="min")
 print("最佳 eval_loss checkpoint:", best_loss_ckpt)
 best_acc1_ckpt = find_best_checkpoint(model_root_dir, "eval_acc1", mode="max")
@@ -88,7 +89,7 @@ def encode_batch(batch_inputs):
 
 
 # Path to the processed documents
-model_name = "modernBert_fp_fp16" # 有SFT，且SFT是fp16
+model_name = "modernBert_fp_fp16_canada" # 有SFT，且SFT是fp16
 print(f"------Using {model_name} to encode documents------\n")
 candidate_dataset_path = f"{TASK1_DIR}/processed"
 query_dataset_path = f"{TASK1_DIR}/processed_new"

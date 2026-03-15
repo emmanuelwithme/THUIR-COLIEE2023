@@ -11,6 +11,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 from lcr.device import get_device
 from lcr.embeddings import process_directory_to_embeddings
 
@@ -59,10 +64,10 @@ def main() -> None:
     tokenizer, encode_batch = load_tokenizer_and_model(device)
 
     suffix = "_test" if QUICK_TEST else ""
-    candidate_dataset_path = Path("./coliee_dataset/task1/processed")
-    query_dataset_path = Path("./coliee_dataset/task1/processed_new")
-    candidate_output_path = Path(f"./coliee_dataset/task1/processed/processed_document_{MODEL_NAME}_embeddings{suffix}.pkl")
-    query_output_path = Path(f"./coliee_dataset/task1/processed_new/processed_new_document_{MODEL_NAME}_embeddings{suffix}.pkl")
+    candidate_dataset_path = Path(f"{TASK1_DIR}/processed")
+    query_dataset_path = Path(f"{TASK1_DIR}/processed_new")
+    candidate_output_path = Path(f"{TASK1_DIR}/processed/processed_document_{MODEL_NAME}_embeddings{suffix}.pkl")
+    query_output_path = Path(f"{TASK1_DIR}/processed_new/processed_new_document_{MODEL_NAME}_embeddings{suffix}.pkl")
 
     print("------Using continued-pretrained ModernBERT to encode documents------\n")
 

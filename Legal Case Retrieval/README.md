@@ -14,6 +14,23 @@ To be specific, we design structure-aware pre-trained language models to enhance
 
 `build_query_candidate_scope.py` (in `pre-process/`) builds a per-query candidate scope JSON (query -> allowed candidate ids), so retrieval can filter out future cases before similarity computation.
 
+### Dataset year switch (`.env`)
+
+Task1 paths are controlled by repo-root `.env`:
+
+```env
+COLIEE_TASK1_YEAR=2025
+COLIEE_TASK1_ROOT=./coliee_dataset/task1
+```
+
+Scripts read this setting and resolve Task1 data directory as:
+
+`$COLIEE_TASK1_ROOT/$COLIEE_TASK1_YEAR`
+
+Example:
+- `2025` -> `./coliee_dataset/task1/2025`
+- `2026` -> `./coliee_dataset/task1/2026`
+
 
 ## Traditional Lexical Matching Models
 

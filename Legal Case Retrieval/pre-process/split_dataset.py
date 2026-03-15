@@ -2,6 +2,17 @@ import json
 import random
 import os
 import argparse
+import sys
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
 
 def split_dataset(input_file, train_ratio=0.8, seed=42, output_dir=None):
     """
@@ -78,10 +89,10 @@ def split_dataset(input_file, train_ratio=0.8, seed=42, output_dir=None):
 
 if __name__ == "__main__":
     # 需要修改的參數
-    input_file = r"./coliee_dataset/task1/task1_train_labels_2025.json"  # 輸入的標籤檔案路徑
+    input_file = rf"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"  # 輸入的標籤檔案路徑
     train_ratio = 0.8  # 訓練集比例
     seed = 42  # 隨機種子
-    output_dir = r"./coliee_dataset/task1"  # 輸出目錄，如果為None則使用輸入檔案所在目錄
+    output_dir = rf"{TASK1_DIR}"  # 輸出目錄，如果為None則使用輸入檔案所在目錄
     
     # 執行分割
     split_dataset(input_file, train_ratio, seed, output_dir) 

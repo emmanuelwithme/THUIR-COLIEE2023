@@ -1,19 +1,29 @@
 import json
 import stat
 from tqdm import tqdm
-import jieba
 import re
 import os
+import sys
 import numpy as np
+from pathlib import Path
 from collections import defaultdict
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
+
 # 輸入輸出路徑定義
-raw_path = './coliee_dataset/task1/processed'
-output_dir = './coliee_dataset/task1/lht_process/BM25'
+raw_path = f"{TASK1_DIR}/processed"
+output_dir = f"{TASK1_DIR}/lht_process/BM25"
 query_valid_file = os.path.join(output_dir, 'query_valid.tsv')
 query_train_file = os.path.join(output_dir, 'query_train.tsv')
-label_path = './coliee_dataset/task1/task1_train_labels_2025.json'
-valid_dir = './coliee_dataset/task1'
+label_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"
+valid_dir = f"{TASK1_DIR}"
 valid_path = os.path.join(valid_dir, 'valid_qid.tsv')
 train_path = os.path.join(valid_dir, 'train_qid.tsv')
 
@@ -71,6 +81,7 @@ print(f"已成功創建訓練集ID文件: {train_path}")
 # 處理驗證集查詢
 outfile_valid = open(query_valid_file, 'w', encoding='utf-8')
 max_len_valid = 0
+skipped_valid_empty = []
 print("處理驗證集查詢...")
 for a_file in tqdm(file_dir):
     pid = a_file.split('.')[0]
@@ -88,6 +99,11 @@ for a_file in tqdm(file_dir):
                 if len(line) != 0:
                     text_ = text_ + line
         
+        text_ = text_.strip()
+        if len(text_) == 0:
+            skipped_valid_empty.append(pid)
+            continue
+
         if len(text_) > max_len_valid:
             max_len_valid = len(text_)
         if len(text_) > 30000:
@@ -99,10 +115,13 @@ for a_file in tqdm(file_dir):
 outfile_valid.close()
 print(f"最大驗證集文本長度: {max_len_valid}")
 print(f"已成功創建驗證集查詢文件: {query_valid_file}")
+if skipped_valid_empty:
+    print(f"⚠️ 驗證集有 {len(skipped_valid_empty)} 筆空查詢已跳過，例如: {skipped_valid_empty[:10]}")
 
 # 處理訓練集查詢
 outfile_train = open(query_train_file, 'w', encoding='utf-8')
 max_len_train = 0
+skipped_train_empty = []
 print("處理訓練集查詢...")
 for a_file in tqdm(file_dir):
     pid = a_file.split('.')[0]
@@ -120,6 +139,11 @@ for a_file in tqdm(file_dir):
                 if len(line) != 0:
                     text_ = text_ + line
         
+        text_ = text_.strip()
+        if len(text_) == 0:
+            skipped_train_empty.append(pid)
+            continue
+
         if len(text_) > max_len_train:
             max_len_train = len(text_)
         if len(text_) > 30000:
@@ -132,3 +156,5 @@ outfile_train.close()
 print(f"最大訓練集文本長度: {max_len_train}")
 print(f"已成功創建訓練集查詢文件: {query_train_file}")
 print(f"訓練集查詢文件包含 {len(train_list)} 條記錄，驗證集查詢文件包含 {len(valid_list)} 條記錄")
+if skipped_train_empty:
+    print(f"⚠️ 訓練集有 {len(skipped_train_empty)} 筆空查詢已跳過，例如: {skipped_train_empty[:10]}")

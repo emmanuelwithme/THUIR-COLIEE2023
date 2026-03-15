@@ -1,8 +1,19 @@
 import os
 import re
+import sys
 from tqdm import tqdm
 import multiprocessing
 from functools import partial
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_year
+
+TASK1_DIR = get_task1_dir()
+TASK1_YEAR = get_task1_year()
 
 def process_file(name, input_dir, output_dir):
     with open(f"{input_dir}/{name}", "r", encoding="utf-8") as f:
@@ -27,8 +38,8 @@ def process_file(name, input_dir, output_dir):
 
 
 if __name__ == "__main__":
-    input_dir = "./coliee_dataset/task1/task1_train_files_2025"
-    output_dir = "./coliee_dataset/task1/summary"
+    input_dir = f"{TASK1_DIR}/task1_train_files_{TASK1_YEAR}"
+    output_dir = f"{TASK1_DIR}/summary"
     
     # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)

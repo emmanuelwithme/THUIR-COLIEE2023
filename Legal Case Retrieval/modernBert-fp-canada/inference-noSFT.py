@@ -20,13 +20,19 @@ from lcr.device import get_device
 from lcr.embeddings import process_directory_to_embeddings
 
 MAX_LENGTH = 4096
-MODEL_NAME = "modernBert_origin"  # 與 downstream 檔名保持一致（eval.py 會讀取）
-MODEL_ID = "answerdotai/ModernBERT-base"
+MODEL_NAME = "modernBert_fp_canada"
 QUICK_TEST = False
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CKPT_DIR = REPO_ROOT / "stage3-4096-encoder-laststep-777"
+
 def load_tokenizer_and_model(device: torch.device):
+    if not CKPT_DIR.exists():
+        raise FileNotFoundError(f"找不到 continued pretraining checkpoint: {CKPT_DIR}")
+    ckpt_dir = CKPT_DIR
+
     tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_ID,
+        ckpt_dir,
         model_max_length=MAX_LENGTH,
         use_fast=True,
         trust_remote_code=True,
@@ -43,7 +49,7 @@ def load_tokenizer_and_model(device: torch.device):
     if device.type == "cuda":
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
-    model = AutoModel.from_pretrained(MODEL_ID, **model_kwargs)
+    model = AutoModel.from_pretrained(ckpt_dir, **model_kwargs)
     model = model.eval()
 
     def encode_batch(batch_inputs):
@@ -64,7 +70,7 @@ def main() -> None:
     candidate_output_path = Path(f"{TASK1_DIR}/processed/processed_document_{MODEL_NAME}_embeddings{suffix}.pkl")
     query_output_path = Path(f"{TASK1_DIR}/processed_new/processed_new_document_{MODEL_NAME}_embeddings{suffix}.pkl")
 
-    print(f"------Using {MODEL_ID} to encode documents------\n")
+    print("------Using continued-pretrained ModernBERT to encode documents------\n")
 
     # Candidate
     print("--------------------------")

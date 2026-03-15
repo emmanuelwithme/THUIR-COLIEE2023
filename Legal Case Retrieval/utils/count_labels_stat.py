@@ -1,8 +1,55 @@
+import argparse
 import json
 import os
+import sys
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from lcr.task1_paths import get_task1_dir, get_task1_root, get_task1_year
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Count label statistics for COLIEE Task1."
+    )
+    parser.add_argument(
+        "--year",
+        type=str,
+        default=None,
+        help="Task1 year (e.g., 2025 or 2026). Default uses COLIEE_TASK1_YEAR/.env.",
+    )
+    parser.add_argument(
+        "--task1-root",
+        type=str,
+        default=None,
+        help="Task1 root directory. Default uses COLIEE_TASK1_ROOT/.env.",
+    )
+    return parser.parse_args()
+
+
+def resolve_task1_dir(year: str | None, task1_root: str | None) -> tuple[Path, str]:
+    resolved_year = (year or get_task1_year()).strip()
+    if task1_root:
+        root = Path(task1_root).expanduser()
+        if not root.is_absolute():
+            root = Path.cwd() / root
+        resolved_dir = (root / resolved_year).resolve()
+    else:
+        if year:
+            root = Path(get_task1_root())
+            resolved_dir = (root / resolved_year).resolve()
+        else:
+            resolved_dir = Path(get_task1_dir())
+    return resolved_dir, resolved_year
+
+
+args = parse_args()
+TASK1_DIR, TASK1_YEAR = resolve_task1_dir(args.year, args.task1_root)
 
 # 文件路徑
-label_path = r"coliee_dataset/task1/task1_train_labels_2025.json"
+label_path = TASK1_DIR / f"task1_train_labels_{TASK1_YEAR}.json"
 
 # 檢查文件是否存在
 if not os.path.exists(label_path):
@@ -40,6 +87,7 @@ try:
             min_query = query
     
     # 輸出結果
+    print(f"Task1 年份: {TASK1_YEAR}")
     print(f"標籤文件: {label_path}")
     print(f"查詢(Query)總數: {query_count}")
     print(f"相關文檔總數: {total_docs}")

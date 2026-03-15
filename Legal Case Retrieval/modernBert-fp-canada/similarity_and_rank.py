@@ -19,7 +19,7 @@ from lcr.similarity import compute_similarity_and_save
 
 if __name__ == "__main__":
     _device = get_device()
-    model_name = "modernBert_fp_fp16"
+    model_name = "modernBert_fp_fp16_canada"
     # candidate 判決書
     processed_doc_embedding_path = f"{TASK1_DIR}/processed/processed_document_{model_name}_embeddings.pkl"
     # query 判決書
