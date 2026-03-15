@@ -20,6 +20,7 @@ from transformers import (
     EarlyStoppingCallback,
     EvalPrediction
 )
+from transformers.trainer_utils import get_last_checkpoint
 from torch.utils.data import Dataset
 import numpy as np
 from sklearn.metrics import accuracy_score
@@ -68,6 +69,10 @@ _EVAL_EPOCH_TAG = None  # 用於在評估時以 epoch 編號命名輸出檔
 # 切換快速測試模式：True 只取極少量資料以便快速驗證流程
 QUICK_TEST = False # 如果要正式訓練，設成 False
 SCOPE_FILTER = True  # 依 query 年份限制候選庫，避免抽到未來判決書
+RETRIEVAL_BATCH_SIZE = max(1, int(os.getenv("TASK1_RETRIEVAL_BATCH_SIZE", "8")))
+INIT_TEMPERATURE = float(os.getenv("TASK1_INIT_TEMPERATURE", "0.55555"))
+if INIT_TEMPERATURE <= 0:
+    raise ValueError(f"TASK1_INIT_TEMPERATURE must be > 0, got: {INIT_TEMPERATURE}")
 
 # 由 main() 設定，用於 generate_similarity_artifacts 的覆寫資料
 _QT_CANDIDATE_FILES = None   # List[str] 檔名（包含 .txt）
@@ -80,7 +85,8 @@ QT_QUERY_K = 5  # 訓練 query 數量上限，以及BM25選出的驗證資料(va
 
 
 def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, query_dataset_path, 
-                           train_qid_path, valid_qid_path, labels_path, output_dir, epoch_num, topk=5):
+                           train_qid_path, valid_qid_path, labels_path, output_dir, epoch_num, topk=5,
+                           retrieval_batch_size: int = RETRIEVAL_BATCH_SIZE):
     """
     評估模型在整體train和valid data上的檢索性能
     """
@@ -123,7 +129,7 @@ def evaluate_model_retrieval(model, tokenizer, device, candidate_dataset_path, q
             query_ids=qids,
             trec_output_path=Path(output_dir) / f"similarity_scores_{epoch_tag}.tsv",
             run_tag=f"modernBert_{epoch_tag}",
-            batch_size=1,
+            batch_size=retrieval_batch_size,
             max_length=4096,
             quick_test=QUICK_TEST,
             candidate_files_override=_QT_CANDIDATE_FILES,
@@ -332,7 +338,8 @@ def make_compute_metrics_for_retrieval(model, tokenizer,
                                        train_qid_path,
                                        valid_qid_path,
                                        labels_path,
-                                       output_dir):
+                                       output_dir,
+                                       retrieval_batch_size: int = RETRIEVAL_BATCH_SIZE):
     """Factory to create compute_metrics that also computes full-corpus retrieval metrics.
 
     Returns a function taking EvalPrediction and returning a metrics dict including:
@@ -376,6 +383,7 @@ def make_compute_metrics_for_retrieval(model, tokenizer,
             output_dir=output_dir,
             epoch_num=unique_epoch_tag,
             topk=5,
+            retrieval_batch_size=retrieval_batch_size,
         )
 
         # 3) Global metric for best model selection/early stopping
@@ -568,6 +576,7 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
                  finetune_data_dir: str = None,
                  sampling_temperature: float = 1.0,
                  update_frequency: int = 1,  # 新增：多少epoch更新一次負樣本
+                 retrieval_batch_size: int = RETRIEVAL_BATCH_SIZE,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.candidate_dataset_path = candidate_dataset_path
@@ -577,7 +586,9 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
         self.finetune_data_dir = finetune_data_dir
         self.sampling_temperature = sampling_temperature
         self.update_frequency = update_frequency
+        self.retrieval_batch_size = max(1, retrieval_batch_size)
         self.current_epoch = 0
+        self._prepared_epoch_index = None  # resume 時若已預先準備該 epoch 的負樣本，callback 需略過一次
         
         # 載入正樣本資料和query IDs
         if train_qid_path:
@@ -597,6 +608,7 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
         print(f"🔹 適應性負樣本採樣設定：")
         print(f"   - 負樣本更新頻率：每 {self.update_frequency} 個epoch")
         print(f"   - 採樣溫度：{self.sampling_temperature}")
+        print(f"   - Candidate embedding batch size：{self.retrieval_batch_size}")
         if hasattr(self, 'train_qids'):
             print(f"   - 訓練查詢數量：{len(self.train_qids)}")
         if hasattr(self, 'positives'):
@@ -650,13 +662,130 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
     
     def _inner_training_loop(self, batch_size=None, args=None, resume_from_checkpoint=None, trial=None, ignore_keys_for_eval=None):
         """重寫training loop來在每個epoch開始前更新負樣本"""
-        
-        # 在第一個epoch開始前就使用適應性負樣本
-        if self.current_epoch == 0:
+        train_size = len(self.train_dataset) if self.train_dataset is not None else 0
+
+        # train_dataset 一開始是空的，先確保可訓練資料存在
+        if train_size == 0:
+            restored = False
+            if resume_from_checkpoint:
+                print(f"🔹 偵測到 resume_from_checkpoint={resume_from_checkpoint}")
+                completed_epoch = self.get_completed_epoch_from_checkpoint(resume_from_checkpoint)
+                if completed_epoch is not None:
+                    # HF trainer_state 的 epoch 是已完成的 epoch 數；下一輪訓練的 epoch index 即 completed_epoch
+                    next_epoch_index = completed_epoch
+                    self.current_epoch = next_epoch_index
+                    print(
+                        f"🔹 依 checkpoint 對齊動態負樣本："
+                        f"已完成 epoch={completed_epoch}，將準備下一輪(第{next_epoch_index + 1}輪)資料"
+                    )
+                    restored = self.load_adaptive_data_for_epoch(next_epoch_index)
+                    if not restored:
+                        print(
+                            f"🔹 找不到 adaptive_negative_epoch{next_epoch_index}_train.json，"
+                            "將即時計算該輪動態負樣本"
+                        )
+                        self.update_negative_samples()
+                        restored = len(self.train_dataset) > 0
+                    if restored:
+                        self._prepared_epoch_index = next_epoch_index
+                else:
+                    print("⚠️ 無法從 checkpoint 解析 epoch，改用最新 adaptive negatives 檔案")
+                    restored = self.load_latest_adaptive_data()
+            if not restored:
+                print("🔹 找不到可用的 adaptive negatives，改為即時計算一次")
+                self.update_negative_samples()
+        elif self.current_epoch == 0 and not resume_from_checkpoint:
             print("🔹 第0個epoch開始使用適應性負樣本...")
             self.update_negative_samples()
         
         return super()._inner_training_loop(batch_size, args, resume_from_checkpoint, trial, ignore_keys_for_eval)
+
+    def load_latest_adaptive_data(self) -> bool:
+        """從 finetune_data_dir 載入最新 adaptive_negative_epoch*_train.json。"""
+        if not self.finetune_data_dir:
+            return False
+        if not hasattr(self.train_dataset, "update_data"):
+            return False
+
+        data_dir = Path(self.finetune_data_dir)
+        if not data_dir.exists():
+            return False
+
+        candidates = []
+        for path in data_dir.glob("adaptive_negative_epoch*_train.json"):
+            stem = path.stem  # adaptive_negative_epoch{N}_train
+            epoch_str = stem.removeprefix("adaptive_negative_epoch").removesuffix("_train")
+            if epoch_str.isdigit():
+                candidates.append((int(epoch_str), path))
+
+        if not candidates:
+            return False
+
+        candidates.sort(key=lambda x: x[0])
+        latest_epoch, latest_path = candidates[-1]
+        try:
+            with open(latest_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:
+            print(f"⚠️ 讀取 adaptive negatives 失敗: {latest_path} ({e})")
+            return False
+
+        if not payload:
+            print(f"⚠️ adaptive negatives 檔案為空: {latest_path}")
+            return False
+
+        self.train_dataset.update_data(payload)
+        print(
+            f"✅ 已載入最新 adaptive negatives: {latest_path.name} "
+            f"(epoch={latest_epoch}, samples={len(payload)})"
+        )
+        return True
+
+    def load_adaptive_data_for_epoch(self, epoch_index: int) -> bool:
+        """載入指定 epoch index 的 adaptive_negative_epoch{index}_train.json。"""
+        if not self.finetune_data_dir:
+            return False
+        if not hasattr(self.train_dataset, "update_data"):
+            return False
+
+        target_path = Path(self.finetune_data_dir) / f"adaptive_negative_epoch{epoch_index}_train.json"
+        if not target_path.exists():
+            return False
+
+        try:
+            with open(target_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:
+            print(f"⚠️ 讀取指定 adaptive negatives 失敗: {target_path} ({e})")
+            return False
+
+        if not payload:
+            print(f"⚠️ 指定 adaptive negatives 檔案為空: {target_path}")
+            return False
+
+        self.train_dataset.update_data(payload)
+        print(
+            f"✅ 已載入對應 epoch 的 adaptive negatives: {target_path.name} "
+            f"(epoch={epoch_index}, samples={len(payload)})"
+        )
+        return True
+
+    def get_completed_epoch_from_checkpoint(self, resume_from_checkpoint) -> Optional[int]:
+        """解析 checkpoint trainer_state.json 的 epoch（已完成的 epoch 數，取整數）。"""
+        if not resume_from_checkpoint:
+            return None
+        state_path = Path(resume_from_checkpoint) / "trainer_state.json"
+        if not state_path.exists():
+            return None
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            epoch_value = state.get("epoch", None)
+            if epoch_value is None:
+                return None
+            return int(float(epoch_value))
+        except Exception as e:
+            print(f"⚠️ 解析 checkpoint epoch 失敗: {state_path} ({e})")
+            return None
     
     def load_bm25_backup_data(self):
         """載入BM25備用資料作為初始訓練資料"""
@@ -698,7 +827,7 @@ class AdaptiveNegativeSamplingTrainer(Trainer):
                 query_ids=self.train_qids,
                 trec_output_path=Path(self.finetune_data_dir) / f"similarity_scores_epoch{self.current_epoch}.tsv",
                 run_tag=f"modernBert_epoch{self.current_epoch}",
-                batch_size=1,
+                batch_size=self.retrieval_batch_size,
                 max_length=4096,
                 quick_test=QUICK_TEST,
                 candidate_files_override=_QT_CANDIDATE_FILES,
@@ -832,6 +961,14 @@ class AdaptiveNegativeSamplingCallback(TrainerCallback):
             self.last_epoch = current_epoch
             if hasattr(self.trainer_instance, 'update_negative_samples'):
                 self.trainer_instance.current_epoch = current_epoch
+                prepared_epoch = getattr(self.trainer_instance, "_prepared_epoch_index", None)
+                if prepared_epoch is not None and current_epoch == prepared_epoch:
+                    print(
+                        f"\n🔹 第{current_epoch}個epoch已依 checkpoint 預先準備動態負樣本，"
+                        "本輪跳過重算一次"
+                    )
+                    self.trainer_instance._prepared_epoch_index = None
+                    return
                 upd_freq = getattr(self.trainer_instance, 'update_frequency', 1)
                 if current_epoch >= 1 and (upd_freq <= 1 or current_epoch % upd_freq == 0):
                     print(f"\n🔹 第{current_epoch}個epoch需要更新負樣本 (更新頻率: 每{max(upd_freq,1)}個epoch)")
@@ -854,7 +991,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     # 2. 初始化自定義的 Contrastive Model
-    model = ModernBERTContrastive(model_name, device)
+    model = ModernBERTContrastive(model_name, device, temperature=INIT_TEMPERATURE)
     print("✅ Tokenizer 與 Model 初始化完成")
     
     # Debug: 檢查模型組件
@@ -862,6 +999,7 @@ def main():
     print(f"   - Encoder: {type(model.encoder)}")
     print(f"   - Projector: {type(model.projector)}")
     print(f"   - Log temperature: {model.log_temperature}, temperature(actual): {model.log_temperature.exp().item():.8f}")
+    print(f"   - Init temperature (from env): {INIT_TEMPERATURE}")
     try:
         sample_param = next(model.parameters())
         print(f"   - Model dtype/device: {sample_param.dtype} @ {sample_param.device}")
@@ -878,10 +1016,11 @@ def main():
     valid_qid_path = f"{TASK1_DIR}/valid_qid.tsv"  # Define valid_qid_path
     labels_path = f"{TASK1_DIR}/task1_train_labels_{TASK1_YEAR}.json"  # Define labels_path
     finetune_data_dir = f"{TASK1_DIR}/lht_process/modernBert/finetune_data"
+    retrieval_batch_size = RETRIEVAL_BATCH_SIZE
 
     base_output_dir = "./modernBERT_contrastive_adaptive_fp_fp16"
     if SCOPE_FILTER:
-        base_output_dir += "_scopeFiltered"
+        base_output_dir += "_scopeFilteredRaw"
     if QUICK_TEST:
         base_output_dir += "_test"
         finetune_data_dir += "_test"
@@ -970,6 +1109,7 @@ def main():
     # ✅ 給 temperature 的專屬 LR（自行調整）
     args.temperature_lr = 5e-4
     print(f"   - Trainer bf16/fp16/tf32: bf16={args.bf16}, fp16={args.fp16}, tf32={args.tf32}")
+    print(f"   - Retrieval batch size: {retrieval_batch_size}")
 
     # 6. 建立 Trainer（使用 AdaptiveNegativeSamplingTrainer）
     trainer = AdaptiveNegativeSamplingTrainer(
@@ -988,6 +1128,7 @@ def main():
             valid_qid_path=valid_qid_path,
             labels_path=labels_path,
             output_dir=finetune_data_dir,
+            retrieval_batch_size=retrieval_batch_size,
         ),
         callbacks=[
             EarlyStoppingCallback(early_stopping_patience=5), 
@@ -1011,6 +1152,7 @@ def main():
         finetune_data_dir=finetune_data_dir,
         sampling_temperature=1.0,  # 可以調整這個參數來控制負樣本選擇的隨機性
         update_frequency=1,  # (整數)可以調整：1=每個epoch更新，2=每2個epoch更新一次，等等
+        retrieval_batch_size=retrieval_batch_size,
     )
 
     # 在每個 epoch 開始時依據最新模型重算相似度並重抽負樣本
@@ -1030,7 +1172,26 @@ def main():
         sz = sum(p.numel() for p in g["params"])
         print(f"group {i}: lr={g['lr']}  weight_decay={g['weight_decay']}  #params={sz}")
 
-    trainer.train()
+    # 7. 可中斷後續訓：優先使用指定checkpoint，否則自動找 output_dir 最新checkpoint
+    explicit_resume_ckpt = os.getenv("TASK1_RESUME_FROM_CHECKPOINT", "").strip()
+    auto_resume_flag = os.getenv("TASK1_AUTO_RESUME", "1").strip().lower() not in {"0", "false", "no"}
+    resume_from_checkpoint = None
+    if explicit_resume_ckpt:
+        if not os.path.isdir(explicit_resume_ckpt):
+            raise FileNotFoundError(f"TASK1_RESUME_FROM_CHECKPOINT 不存在: {explicit_resume_ckpt}")
+        resume_from_checkpoint = explicit_resume_ckpt
+        print(f"🔹 使用指定 checkpoint 續訓: {resume_from_checkpoint}")
+    elif auto_resume_flag:
+        last_ckpt = get_last_checkpoint(args.output_dir)
+        if last_ckpt:
+            resume_from_checkpoint = last_ckpt
+            print(f"🔹 偵測到最新 checkpoint，將自動續訓: {resume_from_checkpoint}")
+        else:
+            print("🔹 未找到 checkpoint，將從頭開始訓練")
+    else:
+        print("🔹 TASK1_AUTO_RESUME=0，將從頭開始訓練")
+
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     print(f"\n✅ 訓練與驗證完成！模型已儲存於：{args.output_dir}")
 
 if __name__ == "__main__":

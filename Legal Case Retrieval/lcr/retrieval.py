@@ -62,7 +62,7 @@ def generate_similarity_artifacts(
         query_candidate_scope_path=query_candidate_scope_path,
     )
 
-    if quick_test and candidate_files_override:
+    if candidate_files_override:
         candidate_files = [
             candidate_dir / fname for fname in candidate_files_override
             if (candidate_dir / fname).is_file()
